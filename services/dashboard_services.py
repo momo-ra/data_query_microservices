@@ -60,6 +60,10 @@ async def handle_dashboard(websocket, db:AsyncSession):
         #Authenticate User if the token send in params or not
         try:
             user_data = await authenticate_ws(websocket)
+            if user_data is None:
+                logger.warning("Authentication failed: user_data is None")
+                return
+                
             user_id = user_data.get("user_id")
             logger.info(f"Dashboard websocket connection initiated for user {user_id}")
         except HTTPException as auth_error:

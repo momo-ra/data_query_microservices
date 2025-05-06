@@ -169,46 +169,46 @@ async def patch_card(
         logger.error(f"Error patching card: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error patching card: {str(e)}")
 
-#
+
 # Dashboard Endpoints
-#
-# @router.get("/user/{user_id}/dashboard")
-# async def get_user_dashboard(
-#     user_id: int, 
-#     db: AsyncSession = Depends(get_db),
-#     current_user = Depends(authenticate_user)
-# ):
-#     """Get formatted dashboard data for a user"""
-#     try:
-#         # Verify permissions
-#         auth_user_id = current_user.get("user_id")
-#         if auth_user_id != user_id and "admin" not in current_user.get("roles", []):
-#             return await error_response("Not authorized to view this dashboard", status_code=403)
+
+@router.get("/user/{user_id}/dashboard")
+async def get_user_dashboard(
+    user_id: int, 
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(authenticate_user)
+):
+    """Get formatted dashboard data for a user"""
+    try:
+        # Verify permissions
+        auth_user_id = current_user.get("user_id")
+        if auth_user_id != user_id and "admin" not in current_user.get("roles", []):
+            return await error_response("Not authorized to view this dashboard", status_code=403)
         
-#         # Get cards using the existing function
-#         cards_response = await get_user_cards(db, user_id, current_user)
+        # Get cards using the existing function
+        cards_response = await get_user_cards(db, user_id, current_user)
         
-#         # If there was an error getting cards, return it
-#         if cards_response.status_code != 200:
-#             return cards_response
+        # If there was an error getting cards, return it
+        if cards_response.status_code != 200:
+            return cards_response
         
-#         # Get the raw cards data from the response
-#         response_content = cards_response.body.decode('utf-8')
-#         response_data = json.loads(response_content)
-#         cards_data = response_data.get("data", [])
+        # Get the raw cards data from the response
+        response_content = cards_response.body.decode('utf-8')
+        response_data = json.loads(response_content)
+        cards_data = response_data.get("data", [])
         
-#         # Format for dashboard consumption
-#         dashboard_data = format_dashboard_cards(cards_data)
+        # Format for dashboard consumption
+        dashboard_data = format_dashboard_cards(cards_data)
         
-#         # Add any additional dashboard data
-#         dashboard_data["user_settings"] = {
-#             "preferred_theme": "light",
-#             "auto_refresh": True
-#         }
+        # Add any additional dashboard data
+        dashboard_data["user_settings"] = {
+            "preferred_theme": "light",
+            "auto_refresh": True
+        }
         
-#         # Return with standard response format
-#         return await success_response(dashboard_data)
+        # Return with standard response format
+        return await success_response(dashboard_data)
         
-#     except Exception as e:
-#         logger.error(f"Error loading dashboard: {str(e)}")
-#         return await error_response(f"Error loading dashboard: {str(e)}", status_code=500)
+    except Exception as e:
+        logger.error(f"Error loading dashboard: {str(e)}")
+        return await error_response(f"Error loading dashboard: {str(e)}", status_code=500)

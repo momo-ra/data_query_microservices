@@ -1,4 +1,4 @@
-import jwt
+import jwt #type: ignore 
 from fastapi import HTTPException, Security, Depends, Header, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os

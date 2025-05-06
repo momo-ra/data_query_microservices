@@ -1,5 +1,4 @@
 import jwt # type: ignore
-from jwt.exceptions import ExpiredSignatureError, InvalidTokenError # type:ignore
 from fastapi import HTTPException, Security, Depends, Header, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
@@ -34,10 +33,10 @@ def verify_token(token: str) -> Dict[str, Any]:
             raise HTTPException(status_code=401, detail="Invalid token structure: missing user_id")
             
         return payload
-    except ExpiredSignatureError:
+    except jwt.exceptions.ExpiredSignatureError:
         logger.warning("Token has expired")
         return HTTPException(status_code=401, detail="Token has expired")
-    except InvalidTokenError as e:
+    except jwt.exceptions.InvalidTokenError as e:
         logger.warning(f"Invalid token: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid token")
     except Exception as e:

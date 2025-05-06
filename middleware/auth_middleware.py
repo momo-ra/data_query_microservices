@@ -35,7 +35,7 @@ def verify_token(token: str) -> Dict[str, Any]:
         return payload
     except jwt.exceptions.ExpiredSignatureError:
         logger.warning("Token has expired")
-        return HTTPException(status_code=401, detail="Token has expired")
+        raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.exceptions.InvalidTokenError as e:
         logger.warning(f"Invalid token: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -78,7 +78,7 @@ async def authenticate_ws(websocket: WebSocket) -> Optional[Dict[str, Any]]:
     if not token:
         logger.warning("WebSocket connection attempt without token")
         await websocket.close(code=1008)  # Policy violation
-        return HTTPException(status_code=401, detail="Token Not Valid")
+        raise HTTPException(status_code=401, detail="Token Not Valid")
         
     try:
         payload = await verify_ws_token(token)
@@ -87,7 +87,7 @@ async def authenticate_ws(websocket: WebSocket) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"WebSocket authentication failed: {str(e)}")
         await websocket.close(code=1008)  # Policy violation
-        return HTTPException(status_code=500, detail="Internal Server Error")
+        raise HTTPException(status_code=403, detail="Authentication Failed")
 
 # Helper function to get user_id from authenticated user payload
 def get_user_id(auth_data: Dict[str, Any]) -> int:

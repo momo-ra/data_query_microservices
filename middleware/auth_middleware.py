@@ -33,10 +33,10 @@ def verify_token(token: str) -> Dict[str, Any]:
             raise HTTPException(status_code=401, detail="Invalid token structure: missing user_id")
             
         return payload
-    except jwt.exceptions.ExpiredSignatureError:
-        logger.warning("Token has expired")
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.exceptions.InvalidTokenError as e:
+    except jwt.PyJWTError as e:
+        if "Signature has expired" in str(e):
+            logger.warning("Token has expired")
+            raise HTTPException(status_code=401, detail="Token has expired")
         logger.warning(f"Invalid token: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid token")
     except Exception as e:

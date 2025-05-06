@@ -1,8 +1,4 @@
-try:
-    import PyJWT as jwt  # type: ignore
-except ImportError:
-    import jwt  # type: ignore
-
+import jwt
 from fastapi import HTTPException, Security, Depends, Header, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os

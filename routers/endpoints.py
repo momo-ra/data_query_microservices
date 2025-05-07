@@ -98,13 +98,16 @@ async def websocket_dashboard(websocket:WebSocket, db: AsyncSession = Depends(ge
     except Exception as e:
         logger.error(f"WebSocket dashboard error: {str(e)}")
         # WebSocket errors are handled in the handler function
-@router.websocket('/ws/card/{id}')
-async def websocket_card(websocket:WebSocket, db:AsyncSession = Depends(get_db)):
+
+@router.websocket('/ws/card/{card_id}')
+async def websocket_card(websocket: WebSocket, card_id: int, db: AsyncSession = Depends(get_db)):
+    """WebSocket endpoint for real-time updates of card data."""
     try:
-        await handle_card_websocket(websocket, db, card_id= id)
+        await handle_card_websocket(websocket, card_id, db)
     except Exception as e:
         logger.error(f"WebSocket Card Error: {str(e)}")
-        raise e
+        # WebSocket errors are handled in the handler function
+
 @router.get("/user/{user_id}/cards")
 async def get_cards(
     user_id: int, 

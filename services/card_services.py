@@ -246,6 +246,7 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
     try:
         # 1. Authenticate WebSocket connection
         user_data = await authenticate_ws(websocket)
+        print('user_dataaaaaaa', user_data)
         if not user_data:
             # Connection already closed by authenticate_ws if authentication failed
             return

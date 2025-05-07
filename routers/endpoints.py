@@ -4,10 +4,7 @@ from database import get_db
 from services.query_services import get_table_data, get_tag_data_with_tag_id, get_all_tag_data, get_trends_data
 from middleware.auth_middleware import authenticate_user
 from services.card_services import get_user_cards, create_user_card, update_user_card, delete_card, handle_card_websocket, patch_user_card
-# from services.dashboard_services import handle_realtime_tags_websocket, handle_dashboard_websocket
-from utils.dashboard_formatter import format_dashboard_cards
-from utils.response_model import success_response, error_response
-import json
+from services.card_services import handle_card_websocket
 from services.dashboard_services import handle_dashboard
 from utils.log import setup_logger
 
@@ -101,7 +98,13 @@ async def websocket_dashboard(websocket:WebSocket, db: AsyncSession = Depends(ge
     except Exception as e:
         logger.error(f"WebSocket dashboard error: {str(e)}")
         # WebSocket errors are handled in the handler function
-
+@router.websocket('/ws/dashboard/{id}')
+async def websocket_card(websocket:WebSocket, db:AsyncSession = Depends(get_db)):
+    try:
+        await handle_card_websocket(websocket, db, card_id= id)
+    except Exception as e:
+        logger.error(f"WebSocket Card Error: {str(e)}")
+        raise e
 @router.get("/user/{user_id}/cards")
 async def get_cards(
     user_id: int, 

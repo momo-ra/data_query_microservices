@@ -98,7 +98,7 @@ async def websocket_dashboard(websocket:WebSocket, db: AsyncSession = Depends(ge
     except Exception as e:
         logger.error(f"WebSocket dashboard error: {str(e)}")
         # WebSocket errors are handled in the handler function
-@router.websocket('/ws/dashboard/{id}')
+@router.websocket('/ws/card/{id}')
 async def websocket_card(websocket:WebSocket, db:AsyncSession = Depends(get_db)):
     try:
         await handle_card_websocket(websocket, db, card_id= id)

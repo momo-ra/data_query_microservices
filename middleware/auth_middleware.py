@@ -26,6 +26,7 @@ def verify_token(token: str) -> Dict[str, Any]:
     """
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        print(payload, "payloaddddd")
         
         # Validate payload structure
         if "user_id" not in payload:

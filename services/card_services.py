@@ -434,9 +434,12 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
                 
                 # Process Kafka messages
                 try:
-                    # Process one message at a time with a short timeout
-                    message = await asyncio.wait_for(kafka_services.get_next_message(), timeout=0.5)
-                    
+                    # Use the consume_forever generator but limit to one message at a time
+                    message = None
+                    async for msg in kafka_services.consume_forever():
+                        message = msg
+                        break  # Only get one message, then break
+                        
                     # Skip if no message available
                     if not message:
                         continue

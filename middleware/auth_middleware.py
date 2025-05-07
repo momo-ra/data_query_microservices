@@ -26,7 +26,6 @@ def verify_token(token: str) -> Dict[str, Any]:
     """
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        print(payload, "payloaddddd")
         
         # Validate payload structure
         if "user_id" not in payload:
@@ -75,7 +74,6 @@ async def authenticate_ws(websocket: WebSocket) -> Optional[Dict[str, Any]]:
     Automatically closes the WebSocket connection if authentication fails.
     """
     token = await get_token_from_ws_query(websocket)
-    bearer_token = str(f"Bearer {token}")
     
     if not token:
         logger.warning("WebSocket connection attempt without token")
@@ -83,7 +81,7 @@ async def authenticate_ws(websocket: WebSocket) -> Optional[Dict[str, Any]]:
         return None
         
     try:
-        payload = await verify_ws_token(bearer_token)
+        payload = await verify_ws_token(token)
         logger.info(f"WebSocket authenticated for user: {payload.get('user_id')}")
         return payload
     except Exception as e:

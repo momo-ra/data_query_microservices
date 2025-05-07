@@ -4,8 +4,9 @@ from utils.time_utils import parse_relative_time
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from middleware.auth_middleware import authenticate_ws
 from middleware.permission_middleware import check_permission, can_access_card
-# from services.websocket_services import websocket_manager     
+from services.websocket_service import websocket_manager    
 from services.query_services import get_historical_tag_data
+from services.kafka_services import kafka_services
 from datetime import datetime
 import json
 from queries.card_queries import (
@@ -15,6 +16,7 @@ from queries.card_queries import (
 )
 from sqlalchemy import text
 from utils.response_model import success_response, error_response
+from fastapi.websockets import WebSocketState
 
 logger = setup_logger(__name__)
 
@@ -241,17 +243,21 @@ async def delete_card(db: AsyncSession, card_id: int, current_user: dict):
         return await error_response(f"Database error: {str(e)}", status_code=500)
 
 async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSession):
-    """WebSocket handler for real-time updates of card data"""
-    client_id = None
+    """WebSocket handler for real-time updates of a single card data"""
+    user_id = None
     try:
         # 1. Authenticate WebSocket connection
-        user_data = await authenticate_ws(websocket)
-        print('user_dataaaaaaa', user_data)
-        if not user_data:
-            # Connection already closed by authenticate_ws if authentication failed
+        try:
+            user_data = await authenticate_ws(websocket)
+            if user_data is None:
+                logger.warning(f"Authentication failed for card {card_id} websocket")
+                return
+                
+            user_id = user_data.get("user_id")
+            logger.info(f"Card websocket connection initiated for user {user_id}, card {card_id}")
+        except HTTPException as auth_error:
+            logger.warning(f"Authentication failed: {auth_error.detail}")
             return
-            
-        auth_user_id = user_data.get("user_id")
         
         # 2. Get card data
         result = await db.execute(GET_CARD_WITH_TAGS, {"card_id": card_id})
@@ -267,7 +273,7 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
         can_access = await can_access_card(db, card_id, user_data)
         
         if not can_access:
-            logger.warning(f"User {auth_user_id} not authorized to view card {card_id}")
+            logger.warning(f"User {user_id} not authorized to view card {card_id}")
             await websocket.close(code=1008)  # Policy violation
             return
             
@@ -278,8 +284,16 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
         
         logger.info(f"Card {card_id} tags: {tag_ids}, time range: {start_time} to {end_time}")
         
-        # 5. Accept WebSocket connection - pass user data to the manager
-        # client_id = await websocket_manager.connect(websocket, user_data)
+        # 5. Connect user to websocket manager
+        await websocket_manager.connect(websocket, user_id)
+        
+        # Send initial connection success message
+        await websocket.send_json({
+            "type": "connection_status", 
+            "status": "connected",
+            "user_id": user_id,
+            "card_id": str(card_id)
+        })
         
         # 6. Fetch historical data and send it
         try:
@@ -288,7 +302,7 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
                 tag_ids, 
                 start_time, 
                 end_time,
-                user_id=auth_user_id
+                user_id=user_id
             )
             
             # Format response according to WebSocketCardSchema
@@ -329,39 +343,130 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
                 "type": "initial_data", 
                 "card_id": str(card_id), 
                 "tags": card_tags,
-                "graph_type": "1"  # Default to "1" as string per schema
+                "graph_type": card_rows[0].get('graph_type_id', "1")  # Get graph type from DB or default to "1"
             }
             
-            # Include original payload for backwards compatibility
-            card_response["payload"] = initial_data
+            # Send initial data
+            await websocket.send_json(card_response)
             
-            # Convert to JSON and send
-            initial_data_msg = json.dumps(card_response, cls=DateTimeEncoder)
-            await websocket.send_text(initial_data_msg)
-            logger.success(f"Sent initial data for card {card_id} to client {client_id}")
+            # Send subscription confirmation
+            await websocket.send_json({
+                "type": "subscription_status",
+                "status": "subscribed",
+                "card_id": str(card_id),
+                "subscribed_tags": [str(tag_id) for tag_id in tag_ids]
+            })
+            
+            logger.success(f"Sent initial data for card {card_id} to user {user_id}")
         except Exception as e:
             logger.error(f"Error fetching/sending historical data for card {card_id}: {e}")
-            error_msg = json.dumps({"type": "error", "message": "Failed to fetch initial data"})
-            await websocket.send_text(error_msg)
+            await websocket.send_json({
+                "type": "error", 
+                "message": "Failed to fetch initial data"
+            })
         
-        # 7. Subscribe to tags for real-time updates
-        # websocket_manager.subscribe(client_id, set(str(tag_id) for tag_id in tag_ids))
-        logger.info(f"Client {client_id} subscribed to tags {tag_ids} for card {card_id}")
+        # Create a mapping of tag_id -> card info for this card
+        card_tag_mapping = {}
+        for tag_id in tag_ids:
+            card_tag_mapping[tag_id] = [{
+                "card_id": card_id,
+                "tag_name": tag_id_to_name.get(tag_id, f"Tag {tag_id}"),
+                "graph_type": card_rows[0].get('graph_type_id', "1")
+            }]
         
-        # 8. Keep connection open to receive real-time updates
-        while True:
-            # Just wait to detect disconnects
-            await websocket.receive_text()
-            logger.debug(f"Received message from client {client_id} for card {card_id}")
+        # 7. Listen for client messages and Kafka updates
+        try:
+            # Process for receiving Kafka updates
+            close_connection = False
+            
+            while not close_connection:
+                # Check websocket state
+                if websocket.client_state == WebSocketState.DISCONNECTED:
+                    logger.info(f"Client disconnected for user {user_id}, card {card_id}")
+                    break
+                
+                # Process Kafka messages
+                async for message in kafka_services.consume_forever():
+                    # Check if connection is still open
+                    if websocket.client_state == WebSocketState.DISCONNECTED:
+                        logger.info(f"Client disconnected for user {user_id}, card {card_id}")
+                        close_connection = True
+                        break
+                        
+                    tag_id = message.get("tag_id")
+                    if not tag_id or tag_id not in tag_ids:
+                        # Skip messages for tags that don't belong to this card
+                        continue
+                        
+                    logger.info(f"Received Kafka message for card {card_id}, tag {tag_id}")
+                    try:
+                        # Format the message for this card
+                        formatted_message = {
+                            "card_id": str(card_id),
+                            "tag": {
+                                "id": str(tag_id),
+                                "name": tag_id_to_name.get(tag_id, f"Tag {tag_id}"),
+                                "description": message.get("description", ""),
+                                "timestamp": message.get("timestamp", ""),
+                                "value": message.get("value", ""),
+                                "unit_of_measure": message.get("unit", "")
+                            },
+                            "graph_type": card_rows[0].get('graph_type_id', "1")
+                        }
+                        
+                        # Send the formatted message
+                        if websocket.client_state == WebSocketState.CONNECTED:
+                            await websocket.send_json(formatted_message)
+                        else:
+                            logger.info(f"Connection no longer viable for user {user_id}, card {card_id}")
+                            close_connection = True
+                            break
+                    except WebSocketDisconnect:
+                        logger.info(f"WebSocket disconnected for user {user_id}, card {card_id}")
+                        close_connection = True
+                        break
+                    except Exception as e:
+                        logger.error(f'Error processing Kafka message for card {card_id}: {str(e)}')
+                        if "close message has been sent" in str(e):
+                            logger.info(f"Connection is closing for user {user_id}, card {card_id}")
+                            close_connection = True
+                            break
+                    
+                    # Limit how many messages we process in a single batch
+                    # to allow checking for disconnection
+                    break
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket disconnected for user {user_id}, card {card_id}")
+        except Exception as e:
+            logger.error(f"Error consuming Kafka messages for card {card_id}: {e}")
+            # Try to send error to client if connection is still open
+            try:
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Internal server error occurred"
+                    })
+            except:
+                pass
             
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected by client: {client_id} for card {card_id}")
+        logger.info(f"WebSocket disconnected during setup for user {user_id}, card {card_id}")
     except Exception as e:
         logger.error(f"Error in card WebSocket for card {card_id}: {e}")
+        # Try to send error to client if connection is still open
+        try:
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Server error: " + str(e)
+                })
+        except:
+            pass
     finally:
-        if client_id:
-            logger.info(f"Cleaning up connection for client {client_id}")
-            # await websocket_manager.disconnect(client_id)
+        # Always ensure we disconnect the user when the connection ends
+        if user_id and websocket_manager.is_connected(user_id):
+            await websocket_manager.disconnect(user_id)
+            logger.info(f"Cleaned up websocket for user {user_id}, card {card_id}")
 
 async def patch_user_card(db: AsyncSession, card_id: int, card_patch: dict, current_user: dict):
     """

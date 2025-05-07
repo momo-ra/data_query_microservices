@@ -116,7 +116,8 @@ async def get_cards(
 ):
     """Retrieve all cards for a specific user with their associated tags."""
     try:
-        return await get_user_cards(db, user_id, current_user)
+        result = await get_user_cards(db, user_id, current_user)
+        return result
     except Exception as e:
         logger.error(f"Error getting user cards: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting user cards: {str(e)}")
@@ -130,7 +131,8 @@ async def create_card(
 ):
     """Create a new card for a user."""
     try:
-        return await create_user_card(db, user_id, card, current_user)
+        result = await create_user_card(db, user_id, card, current_user)
+        return result
     except Exception as e:
         logger.error(f"Error creating user card: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating user card: {str(e)}")
@@ -143,7 +145,8 @@ async def update_card(
 ):
     """Update an existing card for a user."""
     try:
-        return await update_user_card(db, card_id, card)
+        result = await update_user_card(db, card_id, card)
+        return result
     except Exception as e:
         logger.error(f"Error updating card: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error updating card: {str(e)}")
@@ -156,7 +159,8 @@ async def remove_card(
 ):
     """Delete a card (or mark as inactive)."""
     try:
-        return await delete_card(db, card_id, current_user)
+        result = await delete_card(db, card_id, current_user)
+        return result
     except Exception as e:
         logger.error(f"Error deleting card: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting card: {str(e)}")
@@ -170,7 +174,8 @@ async def patch_card(
 ):
     """Patch an existing card - simpler alternative to PUT that only updates specified fields"""
     try:
-        return await patch_user_card(db, card_id, card_patch, current_user)
+        result = await patch_user_card(db, card_id, card_patch, current_user)
+        return result
     except Exception as e:
         logger.error(f"Error patching card: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error patching card: {str(e)}")

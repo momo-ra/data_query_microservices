@@ -67,11 +67,13 @@ async def get_user_cards(db: AsyncSession, user_id: int, current_user: dict):
         cards_list = list(cards_dict.values())
         logger.debug(f"Retrieved {len(cards_list)} cards for user {user_id}")
         
-        return await success_response(cards_list)
+        response = await success_response(cards_list)
+        return response
         
     except Exception as e:
         logger.error(f"Error getting cards for user {user_id}: {e}")
-        return await error_response(f"Database error: {str(e)}", status_code=500)
+        response = await error_response(f"Database error: {str(e)}", status_code=500)
+        return response
 
 async def create_user_card(db: AsyncSession, user_id: int, card: dict, current_user: dict):
     """Create a new card for a user"""
@@ -83,11 +85,13 @@ async def create_user_card(db: AsyncSession, user_id: int, card: dict, current_u
         if auth_user_id != user_id and "admin" not in roles:
             has_permission = await check_permission("create_cards_for_any_user", db, auth_user_id)
             if not has_permission:
-                return await error_response("Not authorized to create cards for this user", status_code=403)
+                response = await error_response("Not authorized to create cards for this user", status_code=403)
+                return response
                 
         # Validate input
         if "tags" not in card or not isinstance(card["tags"], list) or not card["tags"]:
-            return await error_response("Tags must be provided as a non-empty list", status_code=400)
+            response = await error_response("Tags must be provided as a non-empty list", status_code=400)
+            return response
             
         # Get graph_type_id or use default
         graph_type_id = card.get("graph_type_id", 1)  # Default to first graph type
@@ -115,12 +119,14 @@ async def create_user_card(db: AsyncSession, user_id: int, card: dict, current_u
         await db.commit()
         
         logger.success(f"Created new card {card_id} for user {user_id} with {len(card['tags'])} tags")
-        return await success_response({"id": card_id, "status": "created"})
+        response = await success_response({"id": card_id, "status": "created"})
+        return response
     
     except Exception as e:
         await db.rollback()
         logger.error(f"Error creating card for user {user_id}: {e}")
-        return await error_response(f"Database error: {str(e)}", status_code=500)
+        response = await error_response(f"Database error: {str(e)}", status_code=500)
+        return response
 
 async def update_user_card(db: AsyncSession, card_id: int, card: dict):
     """Update an existing card for a user - supports flexible field updates"""
@@ -165,7 +171,8 @@ async def update_user_card(db: AsyncSession, card_id: int, card: dict):
             updated_id = result.scalar_one_or_none()
             
             if not updated_id:
-                return await error_response(f"Card with ID {card_id} not found", status_code=404)
+                response = await error_response(f"Card with ID {card_id} not found", status_code=404)
+                return response
         
         # Only update tags if provided
         if "tags" in card and isinstance(card["tags"], list):
@@ -196,16 +203,18 @@ async def update_user_card(db: AsyncSession, card_id: int, card: dict):
         result_msg = f"Updated card {card_id}: {', '.join(updated_fields)}"
         logger.success(result_msg)
         
-        return await success_response({
+        response = await success_response({
             "id": card_id, 
             "status": "updated", 
             "updated_fields": updated_fields
         })
+        return response
     
     except Exception as e:
         await db.rollback()
         logger.error(f"Error updating card {card_id}: {e}")
-        return await error_response(f"Database error: {str(e)}", status_code=500)
+        response = await error_response(f"Database error: {str(e)}", status_code=500)
+        return response
 
 async def delete_card(db: AsyncSession, card_id: int, current_user: dict):
     """Delete a card (or mark as inactive)"""
@@ -215,7 +224,8 @@ async def delete_card(db: AsyncSession, card_id: int, current_user: dict):
         owner_row = owner_result.first()
         
         if not owner_row:
-            return await error_response(f"Card with ID {card_id} not found", status_code=404)
+            response = await error_response(f"Card with ID {card_id} not found", status_code=404)
+            return response
             
         card_owner_id = owner_row[0]
         auth_user_id = current_user.get("user_id")
@@ -225,23 +235,27 @@ async def delete_card(db: AsyncSession, card_id: int, current_user: dict):
         if auth_user_id != card_owner_id and "admin" not in roles:
             has_permission = await check_permission("delete_any_user_cards", db, auth_user_id)
             if not has_permission:
-                return await error_response("Not authorized to delete this card", status_code=403)
+                response = await error_response("Not authorized to delete this card", status_code=403)
+                return response
         
         # Soft delete by setting is_active to false
         result = await db.execute(SOFT_DELETE_CARD, {"card_id": card_id})
         deleted_id = result.scalar_one_or_none()
         
         if not deleted_id:
-            return await error_response(f"Card with ID {card_id} not found", status_code=404)
+            response = await error_response(f"Card with ID {card_id} not found", status_code=404)
+            return response
         
         await db.commit()
         logger.success(f"Marked card {card_id} as inactive")
-        return await success_response({"id": card_id, "status": "deleted"})
+        response = await success_response({"id": card_id, "status": "deleted"})
+        return response
     
     except Exception as e:
         await db.rollback()
         logger.error(f"Error deleting card {card_id}: {e}")
-        return await error_response(f"Database error: {str(e)}", status_code=500)
+        response = await error_response(f"Database error: {str(e)}", status_code=500)
+        return response
 
 async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSession):
     """WebSocket handler for real-time updates of a single card data"""
@@ -534,7 +548,8 @@ async def patch_user_card(db: AsyncSession, card_id: int, card_patch: dict, curr
         owner_row = owner_result.first()
         
         if not owner_row:
-            return await error_response(f"Card with ID {card_id} not found", status_code=404)
+            response = await error_response(f"Card with ID {card_id} not found", status_code=404)
+            return response
             
         card_owner_id = owner_row[0]
         auth_user_id = current_user.get("user_id")
@@ -544,7 +559,8 @@ async def patch_user_card(db: AsyncSession, card_id: int, card_patch: dict, curr
         if auth_user_id != card_owner_id and "admin" not in roles:
             has_permission = await check_permission("update_any_user_cards", db, auth_user_id)
             if not has_permission:
-                return await error_response("Not authorized to update this card", status_code=403)
+                response = await error_response("Not authorized to update this card", status_code=403)
+                return response
                 
         # Special handling for tags - process separately
         has_tags = "tags" in card_patch
@@ -587,7 +603,8 @@ async def patch_user_card(db: AsyncSession, card_id: int, card_patch: dict, curr
                 updated_id = result.scalar_one_or_none()
                 
                 if not updated_id:
-                    return await error_response(f"Card with ID {card_id} not found", status_code=404)
+                    response = await error_response(f"Card with ID {card_id} not found", status_code=404)
+                    return response
         
         # Handle tags update if provided
         if has_tags and isinstance(tags, list):
@@ -608,13 +625,15 @@ async def patch_user_card(db: AsyncSession, card_id: int, card_patch: dict, curr
         logger.success(f"Patched card {card_id}: {updated_fields}")
         
         # Return standardized success response
-        return await success_response({
+        response = await success_response({
             "id": card_id, 
             "status": "updated", 
             "updated_fields": updated_fields
         })
+        return response
         
     except Exception as e:
         await db.rollback()
         logger.error(f"Error patching card {card_id}: {e}")
-        return await error_response(f"Database error: {str(e)}", status_code=500)
+        response = await error_response(f"Database error: {str(e)}", status_code=500)
+        return response

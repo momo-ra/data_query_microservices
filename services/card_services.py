@@ -17,6 +17,7 @@ from queries.card_queries import (
 from sqlalchemy import text
 from utils.response_model import success_response, error_response
 from fastapi.websockets import WebSocketState
+import asyncio
 
 logger = setup_logger(__name__)
 
@@ -287,16 +288,30 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
         # 5. Connect user to websocket manager
         await websocket_manager.connect(websocket, user_id)
         
+        # Helper function to check if websocket is still connected
+        def is_websocket_connected():
+            return (websocket.client_state == WebSocketState.CONNECTED and 
+                    websocket.application_state == WebSocketState.CONNECTED)
+        
         # Send initial connection success message
-        await websocket.send_json({
-            "type": "connection_status", 
-            "status": "connected",
-            "user_id": user_id,
-            "card_id": str(card_id)
-        })
+        if is_websocket_connected():
+            await websocket.send_json({
+                "type": "connection_status", 
+                "status": "connected",
+                "user_id": user_id,
+                "card_id": str(card_id)
+            })
+        else:
+            logger.info(f"Client already disconnected for user {user_id}, card {card_id}")
+            return
         
         # 6. Fetch historical data and send it
         try:
+            # Check again if still connected before fetching data
+            if not is_websocket_connected():
+                logger.info(f"Client disconnected for user {user_id}, card {card_id}")
+                return
+                
             # Pass user_id to historical data function for audit logging
             initial_data = await get_historical_tag_data(
                 tag_ids, 
@@ -346,24 +361,35 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
                 "graph_type": card_rows[0].get('graph_type_id', "1")  # Get graph type from DB or default to "1"
             }
             
-            # Send initial data
-            await websocket.send_json(card_response)
-            
-            # Send subscription confirmation
-            await websocket.send_json({
-                "type": "subscription_status",
-                "status": "subscribed",
-                "card_id": str(card_id),
-                "subscribed_tags": [str(tag_id) for tag_id in tag_ids]
-            })
-            
-            logger.success(f"Sent initial data for card {card_id} to user {user_id}")
+            # Check again if still connected before sending
+            if is_websocket_connected():
+                # Send initial data
+                await websocket.send_json(card_response)
+                
+                # Send subscription confirmation
+                await websocket.send_json({
+                    "type": "subscription_status",
+                    "status": "subscribed",
+                    "card_id": str(card_id),
+                    "subscribed_tags": [str(tag_id) for tag_id in tag_ids]
+                })
+                
+                logger.success(f"Sent initial data for card {card_id} to user {user_id}")
+            else:
+                logger.info(f"Client disconnected for user {user_id}, card {card_id}")
+                return
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket disconnected while sending initial data for user {user_id}, card {card_id}")
+            return
         except Exception as e:
             logger.error(f"Error fetching/sending historical data for card {card_id}: {e}")
-            await websocket.send_json({
-                "type": "error", 
-                "message": "Failed to fetch initial data"
-            })
+            if is_websocket_connected():
+                await websocket.send_json({
+                    "type": "error", 
+                    "message": "Failed to fetch initial data"
+                })
+            else:
+                return
         
         # Create a mapping of tag_id -> card info for this card
         card_tag_mapping = {}
@@ -380,15 +406,43 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
             close_connection = False
             
             while not close_connection:
-                # Check websocket state
-                if websocket.client_state == WebSocketState.DISCONNECTED:
+                # Check if websocket is still connected
+                if not is_websocket_connected():
                     logger.info(f"Client disconnected for user {user_id}, card {card_id}")
                     break
                 
+                # Add a ping/pong mechanism to detect closed connections faster
+                try:
+                    # Try to receive a message with a timeout - this will throw an exception if client disconnects
+                    data = await asyncio.wait_for(websocket.receive_text(), timeout=0.1)
+                    # If we received a ping message, respond with pong
+                    if data == "ping":
+                        if is_websocket_connected():
+                            await websocket.send_text("pong")
+                except asyncio.TimeoutError:
+                    # This is expected - timeout just means no message received, connection still alive
+                    pass
+                except WebSocketDisconnect:
+                    logger.info(f"Client disconnect detected during receive for user {user_id}, card {card_id}")
+                    close_connection = True
+                    break
+                except Exception as e:
+                    if "connection is closed" in str(e).lower() or "websocket is closed" in str(e).lower():
+                        logger.info(f"Connection closed for user {user_id}, card {card_id}")
+                        close_connection = True
+                        break
+                
                 # Process Kafka messages
-                async for message in kafka_services.consume_forever():
+                try:
+                    # Process one message at a time with a short timeout
+                    message = await asyncio.wait_for(kafka_services.get_next_message(), timeout=0.5)
+                    
+                    # Skip if no message available
+                    if not message:
+                        continue
+                        
                     # Check if connection is still open
-                    if websocket.client_state == WebSocketState.DISCONNECTED:
+                    if not is_websocket_connected():
                         logger.info(f"Client disconnected for user {user_id}, card {card_id}")
                         close_connection = True
                         break
@@ -399,69 +453,68 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
                         continue
                         
                     logger.info(f"Received Kafka message for card {card_id}, tag {tag_id}")
-                    try:
-                        # Format the message for this card
-                        formatted_message = {
-                            "card_id": str(card_id),
-                            "tag": {
-                                "id": str(tag_id),
-                                "name": tag_id_to_name.get(tag_id, f"Tag {tag_id}"),
-                                "description": message.get("description", ""),
-                                "timestamp": message.get("timestamp", ""),
-                                "value": message.get("value", ""),
-                                "unit_of_measure": message.get("unit", "")
-                            },
-                            "graph_type": card_rows[0].get('graph_type_id', "1")
-                        }
-                        
-                        # Send the formatted message
-                        if websocket.client_state == WebSocketState.CONNECTED:
-                            await websocket.send_json(formatted_message)
-                        else:
-                            logger.info(f"Connection no longer viable for user {user_id}, card {card_id}")
-                            close_connection = True
-                            break
-                    except WebSocketDisconnect:
-                        logger.info(f"WebSocket disconnected for user {user_id}, card {card_id}")
+                    
+                    # Format the message for this card
+                    formatted_message = {
+                        "card_id": str(card_id),
+                        "tag": {
+                            "id": str(tag_id),
+                            "name": tag_id_to_name.get(tag_id, f"Tag {tag_id}"),
+                            "description": message.get("description", ""),
+                            "timestamp": message.get("timestamp", ""),
+                            "value": message.get("value", ""),
+                            "unit_of_measure": message.get("unit", "")
+                        },
+                        "graph_type": card_rows[0].get('graph_type_id', "1")
+                    }
+                    
+                    # Double check connection before sending
+                    if is_websocket_connected():
+                        await websocket.send_json(formatted_message)
+                    else:
+                        logger.info(f"Connection no longer viable for user {user_id}, card {card_id}")
                         close_connection = True
                         break
-                    except Exception as e:
-                        logger.error(f'Error processing Kafka message for card {card_id}: {str(e)}')
-                        if "close message has been sent" in str(e):
-                            logger.info(f"Connection is closing for user {user_id}, card {card_id}")
-                            close_connection = True
-                            break
-                    
-                    # Limit how many messages we process in a single batch
-                    # to allow checking for disconnection
+                except asyncio.TimeoutError:
+                    # No Kafka message available, continue
+                    continue
+                except WebSocketDisconnect:
+                    logger.info(f"WebSocket disconnected for user {user_id}, card {card_id}")
+                    close_connection = True
                     break
+                except Exception as e:
+                    logger.error(f'Error processing Kafka message for card {card_id}: {str(e)}')
+                    if "close message has been sent" in str(e) or "connection is closed" in str(e).lower():
+                        logger.info(f"Connection is closing for user {user_id}, card {card_id}")
+                        close_connection = True
+                        break
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected for user {user_id}, card {card_id}")
         except Exception as e:
             logger.error(f"Error consuming Kafka messages for card {card_id}: {e}")
             # Try to send error to client if connection is still open
-            try:
-                if websocket.client_state == WebSocketState.CONNECTED:
+            if is_websocket_connected():
+                try:
                     await websocket.send_json({
                         "type": "error",
                         "message": "Internal server error occurred"
                     })
-            except:
-                pass
+                except:
+                    pass
             
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected during setup for user {user_id}, card {card_id}")
     except Exception as e:
         logger.error(f"Error in card WebSocket for card {card_id}: {e}")
         # Try to send error to client if connection is still open
-        try:
-            if websocket.client_state == WebSocketState.CONNECTED:
+        if websocket.client_state == WebSocketState.CONNECTED:
+            try:
                 await websocket.send_json({
                     "type": "error",
                     "message": "Server error: " + str(e)
                 })
-        except:
-            pass
+            except:
+                pass
     finally:
         # Always ensure we disconnect the user when the connection ends
         if user_id and websocket_manager.is_connected(user_id):

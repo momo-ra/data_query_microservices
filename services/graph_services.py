@@ -7,7 +7,7 @@ async def create_graph(graph_name, description, session, current_user):
     try:
         if not current_user:
             return error_response('User Not Authorized')
-        has_permission = await check_permission('create_graph', db)
+        has_permission = await check_permission('create_graph', session)
         if not has_permission:
             return error_response("User Not Authenticated To Create a New Graph")
         created_at = datetime.now()

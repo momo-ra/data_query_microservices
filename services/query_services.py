@@ -6,10 +6,10 @@ from utils.convert_timestamp import convert_timestamp_format
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 from typing import Optional
-from queries.tag_queries import GET_HISTORICAL_TAG_DATA, GET_ALL_TAGS, GET_TAG_BY_ID, GET_LATEST_TAG_VALUES, GET_TRENDS_DATA
+from queries.tag_queries import GET_HISTORICAL_TAG_DATA, GET_ALL_TAGS, GET_TAG_BY_ID, GET_LATEST_TAG_VALUES, GET_TRENDS_DATA, GET_POLLING_TAGS
+from utils.response import success_response, error_response, handle_exception
 
 logger = setup_logger(__name__)
-
 
 def get_table_data(table_name: str, start_time: str = None, end_time: str = None, limit: int = 100):
     """Retrieve table data with filtering and caching."""
@@ -61,7 +61,6 @@ def get_table_data(table_name: str, start_time: str = None, end_time: str = None
             logger.error(f"Error executing query for table {table_name}: {e}")
             return {"error": f"Database error retrieving data for {table_name}"}
 
-
 def get_tag_data_with_tag_id(tag_id: str):
     """Retrieve tag data with tag ID with caching."""
     if not tag_id:
@@ -88,7 +87,6 @@ def get_tag_data_with_tag_id(tag_id: str):
             logger.error(f"Error executing query for tag_id {tag_id}: {e}")
             return {"error": f"Database error retrieving data for tag {tag_id}"}
 
-
 def get_all_tag_data():
     """Retrieve all tag data with caching."""
     query_key = "all_tag_data"
@@ -109,7 +107,6 @@ def get_all_tag_data():
         except Exception as e:
             logger.error(f"Error executing query for all tags: {e}")
             return {"error": "Database error retrieving all tags"}
-
 
 async def get_trends_data(db: AsyncSession, tag_ids: dict, start_time: str, end_time: str):
     """Get trends data for two given tag IDs and time range (Async)."""
@@ -155,12 +152,10 @@ async def get_trends_data(db: AsyncSession, tag_ids: dict, start_time: str, end_
                 str(tag_id_2): len(data_by_tag[str(tag_id_2)])
             }
         }
-
     except Exception as e:
         logger.error(f"Error executing trends query for tags {tag_id_1}, {tag_id_2}: {e}")
         return {"error": f"Database error retrieving trends data: {e}"}
-
-
+    
 async def get_historical_tag_data(
     tags: list, 
     start_dt: datetime, 
@@ -271,3 +266,30 @@ async def get_historical_tag_data(
         logger.error(f"Error in get_historical_tag_data{user_context}: {e}")
         # Return empty dict instead of error to avoid breaking the WebSocket connection
         return {}
+
+async def get_polling_tags(db, current_user):
+    try:
+        if not current_user:
+            return error_response("Token Not Valid, Token Required")
+        async with db as session:
+            result = await session.execute(GET_POLLING_TAGS)
+            rows = result.mappings().all()
+            
+            formatted_tags = []
+            for row in rows:
+                # The query returns tag_id and tag_name columns
+                tag = {
+                    "id": str(row["tag_id"]),
+                    "name": row["tag_name"],
+                    "description": "",  # Default value
+                    "timestamp": datetime.now().isoformat(),  # Current time as default
+                    "value": "0",  # Default value
+                    "unit_of_measure": ""  # Default value
+                }
+                formatted_tags.append(tag)
+                
+            return success_response(formatted_tags)
+    except Exception as e:
+        error_msg = f"Error fetching polling tags: {str(e)}"
+        logger.error(error_msg)
+        return error_response(error_msg)

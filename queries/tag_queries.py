@@ -42,3 +42,11 @@ GET_TRENDS_DATA = text("""
       AND timestamp BETWEEN :start_time AND :end_time
     ORDER BY tag_id, timestamp
 """)
+
+GET_POLLING_TAGS = text("""
+    SELECT t.name as tag_name, t.id as tag_id, t.description as description, t.unit_of_measure as unit_of_measure
+    FROM polling_tasks p 
+    JOIN tag t ON t.id = p.tag_id
+    WHERE p.is_active = true
+    ORDER BY t.name
+""")

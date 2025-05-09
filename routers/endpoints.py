@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, Query, WebSocket, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from services.query_services import get_table_data, get_tag_data_with_tag_id, get_all_tag_data, get_trends_data
+from services.query_services import get_table_data, get_tag_data_with_tag_id, get_all_tag_data, get_trends_data, get_polling_tags
 from middleware.auth_middleware import authenticate_user
 from services.card_services import get_user_cards, create_user_card, update_user_card, delete_card, handle_card_websocket, patch_user_card
 from services.card_services import handle_card_websocket
 from services.dashboard_services import handle_dashboard
 from utils.log import setup_logger
+from schemas.schema import TagListResponse, CardSchema, GraphSchema
+from services.graph_services import create_graph
 
 router = APIRouter(prefix="/api/v1")
 logger = setup_logger(__name__)
@@ -65,6 +67,26 @@ async def fetch_trends_data(
     except Exception as e:
         logger.error(f"Error fetching trends data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching trends data: {str(e)}")
+
+@router.get('/polling/tags', response_model=TagListResponse)
+async def fetch_polling_tags(db: AsyncSession = Depends(get_db), current_user = Depends(authenticate_user)):
+    """Fetch all active polling tags with validation"""
+    result = await get_polling_tags(db, current_user)
+    if result["status"] == "success":
+        # Return a properly formatted response that will be validated
+        return {
+            "status": "success", 
+            "data": result["data"]
+        }
+    if result["status"] == "fail":
+        return {
+            "status": "fail",
+            "data": None,
+            "message": "Something Went Wrong"
+        }
+    else:
+        logger.error(f"Error fetching polling tags: {result['message']}")
+        raise HTTPException(status_code=500, detail=result["message"])
 
 #comments
 {
@@ -137,15 +159,16 @@ async def create_card(
         logger.error(f"Error creating user card: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating user card: {str(e)}")
 
-@router.put("/user/cards/{card_id}")
+@router.put("/user/cards/{card_id}", response_model= CardSchema)
 async def update_card(
     card_id: int,
     card: dict,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(authenticate_user)
 ):
     """Update an existing card for a user."""
     try:
-        result = await update_user_card(db, card_id, card)
+        result = await update_user_card(db, card_id, card, current_user)
         return result
     except Exception as e:
         logger.error(f"Error updating card: {str(e)}")
@@ -180,7 +203,7 @@ async def patch_card(
         logger.error(f"Error patching card: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error patching card: {str(e)}")
 
-#
+{#
 # Dashboard Endpoints
 # Dashboard Endpoints
 # Dashboard Endpoints
@@ -225,3 +248,22 @@ async def patch_card(
 #     except Exception as e:
 #         logger.error(f"Error loading dashboard: {str(e)}")
 #         return await error_response(f"Error loading dashboard: {str(e)}", status_code=500)
+}
+
+#Graph Endpoints
+@router.post('/graph', response_model=GraphSchema)
+async def create_graph_(graph_name: str, description:str, db: AsyncSession = Depends(get_db)):
+    try:
+        async with db as session:
+            result = await create_graph(graph_name, description, session)
+            
+            # Check if we got a success response
+            if result.get("status") == "success":
+                # Return just the data part which should match GraphSchema
+                return result["data"]
+            else:
+                # If it's an error response, raise an HTTPException
+                raise HTTPException(status_code=400, detail=result.get("message", "Error creating graph"))
+    except Exception as e:
+        logger.error(f"Something Went Wrong in Crate Graph: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

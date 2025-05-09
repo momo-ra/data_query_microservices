@@ -1,10 +1,11 @@
 import jwt #type: ignore 
-from fastapi import HTTPException, Security, Depends, Header, WebSocket
+from fastapi import HTTPException, Security, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 import dotenv
 from utils.log import setup_logger
-from typing import Optional, Dict, List, Any, Union
+from typing import Optional, Dict, Any
+from utils.response_model import error_response
 
 logger = setup_logger(__name__)
 
@@ -30,12 +31,14 @@ def verify_token(token: str) -> Dict[str, Any]:
         # Validate payload structure
         if "user_id" not in payload:
             logger.warning(f"Token missing user_id in payload: {payload}")
-            raise HTTPException(status_code=401, detail="Invalid token structure: missing user_id")
+            return error_response(f"Token missing user_id in payload: {payload}")
+            # raise HTTPException(status_code=401, detail="Invalid token structure: missing user_id")]
             
         return payload
     except jwt.ExpiredSignatureError:
         logger.warning("Token has expired")
-        raise HTTPException(status_code=401, detail="Token has expired")
+        return error_response('Token has expired')
+        # raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.InvalidTokenError as e:
         logger.warning(f"Invalid token: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid token")

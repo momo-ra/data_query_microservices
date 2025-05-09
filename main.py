@@ -6,6 +6,8 @@ import asyncio
 from services.kafka_services import kafka_services
 from utils.log import setup_logger
 from database import init_db
+from middleware.response_middleware import StandardResponseMiddleware
+
 logger = setup_logger(__name__)
 app = FastAPI(title="ChatAPC Data Query Microservice")
 
@@ -17,6 +19,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add StandardResponseMiddleware to standardize all JSON responses
+app.add_middleware(StandardResponseMiddleware)
 
 # Add startup event to initialize Kafka consumer
 @app.on_event("startup")

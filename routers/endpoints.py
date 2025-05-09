@@ -252,10 +252,10 @@ async def patch_card(
 
 #Graph Endpoints
 @router.post('/graph', response_model=GraphSchema)
-async def create_graph_(graph_name: str, description:str, db: AsyncSession = Depends(get_db)):
+async def create_graph_(graph_name: str, description:str, db: AsyncSession = Depends(get_db), current_user= Depends(authenticate_user)):
     try:
         async with db as session:
-            result = await create_graph(graph_name, description, session)
+            result = await create_graph(graph_name, description, session, current_user)
             
             # Check if we got a success response
             if result.get("status") == "success":

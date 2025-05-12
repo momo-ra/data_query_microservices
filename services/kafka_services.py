@@ -37,7 +37,7 @@ class KafkaServices:
                 auto_offset_reset='latest',
                 enable_auto_commit=True,
                 max_poll_records=self.batch_size,
-                consumer_timeout_ms=500  # Short timeout for faster detection of client disconnects
+                consumer_timeout_ms=1000  # Short timeout for faster detection of client disconnects
             )
             return True
         except Exception as e:
@@ -83,7 +83,7 @@ class KafkaServices:
             
         # Only attempt to get a few messages before yielding control back
         # to allow checking for client disconnection
-        max_messages_per_batch = 1
+        max_messages_per_batch = 10
         messages_processed = 0
             
         try:

@@ -1,7 +1,7 @@
 from fastapi import WebSocket
 from utils.log import setup_logger
 from fastapi.websockets import WebSocketState
-import json
+import time
 
 
 logger = setup_logger(__name__)
@@ -54,7 +54,6 @@ class WebSocketManager:
                     # Remove user if connection is closed
                     await self.disconnect(active_user)
                     return False
-                
                 await websocket.send_json(message)
                 return True
             else:

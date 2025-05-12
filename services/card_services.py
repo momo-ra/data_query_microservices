@@ -18,6 +18,7 @@ from sqlalchemy import text
 from utils.response_model import success_response, error_response
 from fastapi.websockets import WebSocketState
 import asyncio
+import time
 
 logger = setup_logger(__name__)
 
@@ -486,12 +487,25 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
                     }
                     
                     # Double check connection before sending
-                    if is_websocket_connected():
-                        await websocket.send_json(formatted_message)
-                    else:
-                        logger.info(f"Connection no longer viable for user {user_id}, card {card_id}")
-                        close_connection = True
-                        break
+                    pending_messages.append(formatted_message)
+                    current_time = time.time()
+
+                    # إرسال المجموعة إذا تجمع عدد كافي أو مر وقت كافي
+                    if len(pending_messages) >= 10 or current_time - last_batch_time > 0.5:
+                        if is_websocket_connected():
+                            # إرسال المجموعة كاملة في رسالة واحدة
+                            await websocket.send_json({
+                                "type": "batch_update",
+                                "card_id": str(card_id),
+                                "updates": pending_messages
+                            })
+                            # تفريغ المجموعة وتحديث الوقت
+                            pending_messages = []
+                            last_batch_time = current_time
+                        else:
+                            logger.info(f"Connection no longer viable for user {user_id}, card {card_id}")
+                            close_connection = True
+                            break
                 except asyncio.TimeoutError:
                     # No Kafka message available, continue
                     continue

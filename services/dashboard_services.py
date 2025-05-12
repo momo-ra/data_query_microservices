@@ -8,6 +8,8 @@ from fastapi import HTTPException, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from schemas.schema import WebSocketCardSchema, TagSchema
 import json 
+import asyncio
+import time
 
 
 logger = setup_logger(__name__)
@@ -55,6 +57,7 @@ async def send_to_subscribe_user(kafka_message, user_id, card_tag_mapping, webso
 
 async def handle_dashboard(websocket, db:AsyncSession):
     user_id = None
+    kafka_subscriber_id = None
     
     try:
         #Authenticate User if the token send in params or not
@@ -106,78 +109,112 @@ async def handle_dashboard(websocket, db:AsyncSession):
                     "graph_type": "line"  # Default graph type - can be enhanced to get from DB
                 })
         
-        if not user_tag_ids:
-            logger.info(f"User {user_id} has no active cards with tags")
-            await websocket.send_json({
-                "type": "info",
-                "message": "No active cards found"
-            })
-        else:
-            # Send initial confirmation of subscription
+        # الاشتراك في التاجات باستخدام النظام الجديد
+        if user_tag_ids:
+            kafka_subscriber_id = await kafka_services.subscribe_to_tags(list(user_tag_ids))
+            logger.info(f"User {user_id} subscribed to {len(user_tag_ids)} tags with ID {kafka_subscriber_id}")
+            
+            # إرسال تأكيد الاشتراك
             await websocket.send_json({
                 "type": "subscription_status",
                 "status": "subscribed",
                 "subscribed_tags": list(user_tag_ids)
             })
+        else:
+            logger.info(f"User {user_id} has no active cards with tags")
+            await websocket.send_json({
+                "type": "info",
+                "message": "No active cards found"
+            })
         
-        # Listen for client messages and Kafka updates
-        try:
-            # Create task for receiving client messages
-            close_connection = False
-            
-            while not close_connection:
-                # Check websocket state - only check DISCONNECTED state
-                if websocket.client_state == WebSocketState.DISCONNECTED:
-                    logger.info(f"Client disconnected for user {user_id}")
-                    break
+        # إضافة متغيرات لتجميع الرسائل
+        message_buffer = {}  # تنظيم حسب card_id
+        last_send_time = time.time()
+        
+        # معالجة الرسائل والاتصال
+        close_connection = False
+        while not close_connection and kafka_subscriber_id:
+            # التحقق من حالة الاتصال
+            if websocket.client_state == WebSocketState.DISCONNECTED:
+                logger.info(f"Client disconnected for user {user_id}")
+                break
                 
-                # Process Kafka messages
-                async for message in kafka_services.consume_forever():
-                    # Check if connection is still open
+            # الحصول على الرسائل المتاحة
+            messages = await kafka_services.get_messages(kafka_subscriber_id)
+            
+            # معالجة الرسائل المستلمة
+            for message in messages:
+                tag_id = message.get("tag_id")
+                if not tag_id:
+                    continue
+                    
+                # البحث عن البطاقات المرتبطة بهذا التاج
+                cards_with_tag = card_tag_mapping.get(tag_id, [])
+                if not cards_with_tag:
+                    continue
+                
+                # إنشاء رسائل منسقة لكل بطاقة
+                for card in cards_with_tag:
+                    card_id = str(card["card_id"])
+                    
+                    # إضافة للـ buffer
+                    if card_id not in message_buffer:
+                        message_buffer[card_id] = []
+                        
+                    # إضافة رسالة منسقة للـ buffer
+                    message_buffer[card_id].append({
+                        "tag": {
+                            "id": str(tag_id),
+                            "name": card["tag_name"],
+                            "description": message.get("description", ""),
+                            "timestamp": message.get("timestamp", ""),
+                            "value": message.get("value", ""),
+                            "unit_of_measure": message.get("unit", "")
+                        }
+                    })
+            
+            # إرسال البيانات المجمعة إذا:
+            # 1. مر وقت كافي (250ms على الأقل)
+            # 2. تجمع عدد كافي من الرسائل (10 على الأقل)
+            current_time = time.time()
+            should_flush = (current_time - last_send_time) >= 0.25
+            
+            if should_flush or any(len(msgs) >= 10 for msgs in message_buffer.values()):
+                for card_id, updates in message_buffer.items():
+                    if not updates:
+                        continue
+                        
+                    # التحقق من حالة الاتصال قبل الإرسال
                     if websocket.client_state == WebSocketState.DISCONNECTED:
-                        logger.info(f"Client disconnected for user {user_id}")
                         close_connection = True
                         break
                         
-                    logger.info(f"Received Kafka message for user {user_id}")
+                    # إرسال حزمة التحديثات
                     try:
-                        send_success = await send_to_subscribe_user(message, user_id, card_tag_mapping, websocket)
-                        if not send_success:
-                            # If message sending failed, it might be due to connection issues
-                            logger.info(f"Failed to send message to user {user_id}, checking connection")
-                            if not websocket_manager.is_connected(user_id) or websocket.client_state != WebSocketState.CONNECTED:
-                                logger.info(f"Connection no longer viable for user {user_id}")
-                                close_connection = True
-                                break
+                        await websocket.send_json({
+                            "type": "data_batch",
+                            "card_id": card_id,
+                            "updates": updates,
+                            "graph_type": next((c["graph_type"] for c in cards_with_tag if str(c["card_id"]) == card_id), "line")
+                        })
                     except WebSocketDisconnect:
                         logger.info(f"WebSocket disconnected for user {user_id}")
                         close_connection = True
                         break
                     except Exception as e:
-                        logger.error(f'Error Processing Kafka message: {str(e)}')
-                        # Check if the error is related to connection closing
+                        logger.error(f"Error sending batch update for card {card_id}: {e}")
                         if "close message has been sent" in str(e):
-                            logger.info(f"Connection is closing for user {user_id}, stopping message processing")
                             close_connection = True
                             break
-                    
-                    # Limit how many messages we process in a single batch
-                    # to allow checking for disconnection
-                    break
-        except WebSocketDisconnect:
-            logger.info(f"WebSocket disconnected for user {user_id}")
-        except Exception as e:
-            logger.error(f"Error consuming Kafka messages: {e}")
-            # Try to send error to client if connection is still open
-            try:
-                if websocket.client_state == WebSocketState.CONNECTED:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Internal server error occurred"
-                    })
-            except:
-                pass
+                
+                # إفراغ الـ buffer وتحديث وقت الإرسال
+                message_buffer = {}
+                last_send_time = current_time
             
+            # انتظار قصير في حالة عدم وجود رسائل
+            if not messages:
+                await asyncio.sleep(0.1)
+                
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected during setup for user {user_id}")
     except Exception as e:
@@ -192,6 +229,10 @@ async def handle_dashboard(websocket, db:AsyncSession):
         except:
             pass
     finally:
+        # إلغاء الاشتراك من كافكا
+        if kafka_subscriber_id:
+            await kafka_services.unsubscribe(kafka_subscriber_id)
+            
         # Always ensure we disconnect the user when the connection ends
         if user_id and websocket_manager.is_connected(user_id):
             await websocket_manager.disconnect(user_id)

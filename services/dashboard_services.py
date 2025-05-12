@@ -2,7 +2,7 @@ from services.websocket_service import websocket_manager
 from middleware.auth_middleware import authenticate_ws
 from utils.log import setup_logger
 from services.kafka_services import kafka_services
-from queries.dashboard_queries import GET_USER_ACTIVE_CARDS_WITH_TAGS
+from queries.dashboard_queries import get_user_active_cards
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
@@ -80,32 +80,31 @@ async def handle_dashboard(websocket, db:AsyncSession):
             "user_id": user_id
         })
 
-        #Get Active Cards for this user in Dashboard
-        active_user_card = await db.execute(GET_USER_ACTIVE_CARDS_WITH_TAGS, {"user_id": user_id})
+        # Get active cards for this user using the query function
+        active_cards = await get_user_active_cards(db, user_id)
         
         # Extract card data and organize by tag_id for efficient lookup
-        rows = active_user_card.fetchall()
-        
         # Store user's tag IDs
         user_tag_ids = set()
         
         # Create a mapping of tag_id -> list of cards containing that tag
         card_tag_mapping = {}
         
-        for row in rows:
-            tag_id = row.tag_id
-            user_tag_ids.add(tag_id)
-            
-            # Create or append to the list of cards for this tag
-            if tag_id not in card_tag_mapping:
-                card_tag_mapping[tag_id] = []
+        for card in active_cards:
+            for tag in card["tags"]:
+                tag_id = tag["id"]
+                user_tag_ids.add(tag_id)
                 
-            # Add card info to the mapping
-            card_tag_mapping[tag_id].append({
-                "card_id": row.card_id,
-                "tag_name": row.tag_name,
-                "graph_type": "line"  # Default graph type - can be enhanced to get from DB
-            })
+                # Create or append to the list of cards for this tag
+                if tag_id not in card_tag_mapping:
+                    card_tag_mapping[tag_id] = []
+                    
+                # Add card info to the mapping
+                card_tag_mapping[tag_id].append({
+                    "card_id": card["id"],
+                    "tag_name": tag["name"],
+                    "graph_type": "line"  # Default graph type - can be enhanced to get from DB
+                })
         
         if not user_tag_ids:
             logger.info(f"User {user_id} has no active cards with tags")

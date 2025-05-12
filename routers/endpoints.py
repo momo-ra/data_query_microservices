@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, WebSocket, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
-from services.query_services import get_table_data, get_tag_data_with_tag_id, get_all_tag_data, get_trends_data, get_polling_tags
+from queries import get_table_data, get_tag_data_with_tag_id, get_all_tag_data, get_trends_data, get_polling_tags
 from middleware.auth_middleware import authenticate_user
 from services.card_services import get_user_cards, create_user_card, update_user_card, delete_card, handle_card_websocket, patch_user_card
 from services.card_services import handle_card_websocket

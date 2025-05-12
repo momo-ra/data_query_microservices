@@ -5,7 +5,7 @@ from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from middleware.auth_middleware import authenticate_ws
 from middleware.permission_middleware import check_permission, can_access_card
 from services.websocket_service import websocket_manager    
-from services.query_services import get_historical_tag_data
+from queries import get_historical_tag_data, get_user_cards, create_user_card, update_user_card, delete_card
 from services.kafka_services import kafka_services
 from datetime import datetime
 import json
@@ -419,6 +419,8 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
         try:
             # Process for receiving Kafka updates
             close_connection = False
+            pending_messages = []
+            last_batch_time = time.time()
             
             while not close_connection:
                 # Check if websocket is still connected
@@ -490,67 +492,40 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
                     pending_messages.append(formatted_message)
                     current_time = time.time()
 
-                    # إرسال المجموعة إذا تجمع عدد كافي أو مر وقت كافي
+                    # Send the batch if there are enough messages or enough time has passed
                     if len(pending_messages) >= 10 or current_time - last_batch_time > 0.5:
                         if is_websocket_connected():
-                            # إرسال المجموعة كاملة في رسالة واحدة
+                            # Send the entire batch in one message
                             await websocket.send_json({
                                 "type": "batch_update",
                                 "card_id": str(card_id),
                                 "updates": pending_messages
                             })
-                            # تفريغ المجموعة وتحديث الوقت
                             pending_messages = []
                             last_batch_time = current_time
-                        else:
-                            logger.info(f"Connection no longer viable for user {user_id}, card {card_id}")
-                            close_connection = True
-                            break
-                except asyncio.TimeoutError:
-                    # No Kafka message available, continue
-                    continue
-                except WebSocketDisconnect:
-                    logger.info(f"WebSocket disconnected for user {user_id}, card {card_id}")
-                    close_connection = True
-                    break
                 except Exception as e:
-                    logger.error(f'Error processing Kafka message for card {card_id}: {str(e)}')
-                    if "close message has been sent" in str(e) or "connection is closed" in str(e).lower():
-                        logger.info(f"Connection is closing for user {user_id}, card {card_id}")
-                        close_connection = True
-                        break
+                    logger.error(f"Error processing Kafka message: {e}")
+                    continue
+                    
+                # Small delay to prevent tight loop
+                await asyncio.sleep(0.01)
+                
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected for user {user_id}, card {card_id}")
+        except asyncio.CancelledError:
+            logger.info(f"WebSocket task cancelled for user {user_id}, card {card_id}")
         except Exception as e:
-            logger.error(f"Error consuming Kafka messages for card {card_id}: {e}")
-            # Try to send error to client if connection is still open
-            if is_websocket_connected():
-                try:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Internal server error occurred"
-                    })
-                except:
-                    pass
+            logger.error(f"Error in card websocket loop: {e}")
             
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected during setup for user {user_id}, card {card_id}")
+        logger.info(f"WebSocket disconnected for user {user_id}")
     except Exception as e:
-        logger.error(f"Error in card WebSocket for card {card_id}: {e}")
-        # Try to send error to client if connection is still open
-        if websocket.client_state == WebSocketState.CONNECTED:
-            try:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Server error: " + str(e)
-                })
-            except:
-                pass
+        logger.error(f"Error in card websocket handler: {e}")
     finally:
-        # Always ensure we disconnect the user when the connection ends
+        # Close connection if still open
         if user_id and websocket_manager.is_connected(user_id):
             await websocket_manager.disconnect(user_id)
-            logger.info(f"Cleaned up websocket for user {user_id}, card {card_id}")
+            logger.info(f"Disconnected user {user_id} from websocket manager")
 
 async def patch_user_card(db: AsyncSession, card_id: int, card_patch: dict, current_user: dict):
     """

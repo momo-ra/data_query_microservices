@@ -100,12 +100,21 @@ async def get_all_tag_data():
     async with engine.connect() as conn:
         try:
             result = await conn.execute(GET_ALL_TAGS)
-            print(result)
             rows = result.mappings().all()
-            data = [dict(row) for row in rows]
+            formatted_tags = []
+            for tag in rows:
+                formatted_tag = {
+                    "id": str(tag.get("id", "")),
+                    "name": tag.get("name", ""),
+                    "description": tag.get("description", ""),
+                    "timestamp": tag.get("timestamp", ""),
+                    "value": str(tag.get("value", "")),
+                    "unit_of_measure": tag.get("unit_of_measure", "")
+                }
+                formatted_tags.append(formatted_tag)
             # await set_cached_data(query_key, data)
-            logger.success(f"All tag data retrieved and cached. Rows: {len(data)}")
-            return success_response(data)
+            print(formatted_tags)
+            return formatted_tags
         except Exception as e:
             logger.error(f"Error executing query for all tags: {e}")
             return {"error": "Database error retrieving all tags"}

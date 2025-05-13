@@ -84,44 +84,22 @@ async def fetch_tag_data(tag_id: int):
         logger.error(f"Error fetching tag data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching tag data: {str(e)}")
 
-@router.get("/tags", response_model=TagListResponse)
+@router.get("/tags", response_model=ResponseModel[List[TagSchema]])
 async def fetch_all_tag_data():
     """Fetch all tag data."""
     try:
         response = await get_all_tag_data()
-        
-        # Convert raw tag data to conform to TagSchema format
-        if isinstance(response, dict) and response.get("status") == "success" and isinstance(response.get("data"), list):
-            formatted_tags = []
-            for tag in response["data"]:
-                formatted_tag = {
-                    "id": str(tag.get("id", "")),
-                    "name": tag.get("name", ""),
-                    "description": tag.get("description", ""),
-                    "timestamp": tag.get("timestamp", ""),
-                    "value": str(tag.get("value", "")),
-                    "unit_of_measure": tag.get("unit_of_measure", "")
-                }
-                formatted_tags.append(formatted_tag)
-            
             # Return properly constructed Pydantic model
-            return TagListResponse(
-                status="success",
-                data=formatted_tags,
-                message=None
-            )
+        if response:
+            return success_response(response)
         elif isinstance(response, dict) and "error" in response:
             # Handle error case using Pydantic model
-            return TagListResponse(
-                status="fail",
+            return error_response(status="fail",
                 data=None,
-                message=response["error"]
-            )
+                message=response["error"])
         else:
             # Handle unexpected response format using Pydantic model
-            return TagListResponse(
-                status="fail",
-                data=None,
+            return error_response(
                 message="Unexpected response format from database query"
             )
     except Exception as e:

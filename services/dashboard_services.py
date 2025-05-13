@@ -109,12 +109,12 @@ async def handle_dashboard(websocket, db:AsyncSession):
                     "graph_type": "line"  # Default graph type - can be enhanced to get from DB
                 })
         
-        # الاشتراك في التاجات باستخدام النظام الجديد
+        # Subscribe to tags using the new system
         if user_tag_ids:
             kafka_subscriber_id = await kafka_services.subscribe_to_tags(list(user_tag_ids))
             logger.info(f"User {user_id} subscribed to {len(user_tag_ids)} tags with ID {kafka_subscriber_id}")
             
-            # إرسال تأكيد الاشتراك
+            # Send subscription confirmation
             await websocket.send_json({
                 "type": "subscription_status",
                 "status": "subscribed",
@@ -127,91 +127,67 @@ async def handle_dashboard(websocket, db:AsyncSession):
                 "message": "No active cards found"
             })
         
-        # إضافة متغيرات لتجميع الرسائل
-        message_buffer = {}  # تنظيم حسب card_id
-        last_send_time = time.time()
-        
-        # معالجة الرسائل والاتصال
+        # Process messages and connection
         close_connection = False
         while not close_connection and kafka_subscriber_id:
-            # التحقق من حالة الاتصال
+            # Check connection state
             if websocket.client_state == WebSocketState.DISCONNECTED:
                 logger.info(f"Client disconnected for user {user_id}")
                 break
                 
-            # الحصول على الرسائل المتاحة
+            # Get available messages
             messages = await kafka_services.get_messages(kafka_subscriber_id)
             
-            # معالجة الرسائل المستلمة
+            # Process received messages
             for message in messages:
                 tag_id = message.get("tag_id")
                 if not tag_id:
                     continue
                     
-                # البحث عن البطاقات المرتبطة بهذا التاج
+                # Find cards associated with this tag
                 cards_with_tag = card_tag_mapping.get(tag_id, [])
                 if not cards_with_tag:
                     continue
                 
-                # إنشاء رسائل منسقة لكل بطاقة
+                # Create formatted message for each card
                 for card in cards_with_tag:
                     card_id = str(card["card_id"])
                     
-                    # إضافة للـ buffer
-                    if card_id not in message_buffer:
-                        message_buffer[card_id] = []
-                        
-                    # إضافة رسالة منسقة للـ buffer
-                    message_buffer[card_id].append({
-                        "tag": {
-                            "id": str(tag_id),
-                            "name": card["tag_name"],
-                            "description": message.get("description", ""),
-                            "timestamp": message.get("timestamp", ""),
-                            "value": message.get("value", ""),
-                            "unit_of_measure": message.get("unit", "")
-                        }
-                    })
-            
-            # إرسال البيانات المجمعة إذا:
-            # 1. مر وقت كافي (250ms على الأقل)
-            # 2. تجمع عدد كافي من الرسائل (10 على الأقل)
-            current_time = time.time()
-            should_flush = (current_time - last_send_time) >= 0.25
-            
-            if should_flush or any(len(msgs) >= 10 for msgs in message_buffer.values()):
-                for card_id, updates in message_buffer.items():
-                    if not updates:
-                        continue
-                        
-                    # التحقق من حالة الاتصال قبل الإرسال
+                    # Check connection state before sending
                     if websocket.client_state == WebSocketState.DISCONNECTED:
                         close_connection = True
                         break
                         
-                    # إرسال حزمة التحديثات
+                    # Format the tag data
+                    tag_data = {
+                        "id": str(tag_id),
+                        "name": card["tag_name"],
+                        "description": message.get("description", ""),
+                        "timestamp": message.get("timestamp", ""),
+                        "value": message.get("value", ""),
+                        "unit_of_measure": message.get("unit", "")
+                    }
+                    
+                    # Send individual message with a single tag object (not in an array)
                     try:
                         await websocket.send_json({
                             "type": "data_batch",
                             "card_id": card_id,
-                            "updates": updates,
-                            "graph_type": next((c["graph_type"] for c in cards_with_tag if str(c["card_id"]) == card_id), "line")
+                            "tag": tag_data,  # Single tag object, not an array
+                            "graph_type": card.get("graph_type", "line")
                         })
+                        logger.debug(f"Sent message for card {card_id} with tag {tag_id}")
                     except WebSocketDisconnect:
                         logger.info(f"WebSocket disconnected for user {user_id}")
                         close_connection = True
                         break
                     except Exception as e:
-                        logger.error(f"Error sending batch update for card {card_id}: {e}")
+                        logger.error(f"Error sending update for card {card_id}: {e}")
                         if "close message has been sent" in str(e):
                             close_connection = True
                             break
-                
-                # إفراغ الـ buffer وتحديث وقت الإرسال
-                message_buffer = {}
-                last_send_time = current_time
             
-            # انتظار قصير في حالة عدم وجود رسائل
+            # Short wait if no messages
             if not messages:
                 await asyncio.sleep(0.1)
                 
@@ -229,7 +205,7 @@ async def handle_dashboard(websocket, db:AsyncSession):
         except:
             pass
     finally:
-        # إلغاء الاشتراك من كافكا
+        # Unsubscribe from Kafka
         if kafka_subscriber_id:
             await kafka_services.unsubscribe(kafka_subscriber_id)
             

@@ -27,10 +27,10 @@ class KafkaServices:
         self.batch_size = 10  # Process messages in batches for better performance
         self._init_consumer()
         
-        # إضافة هياكل البيانات للتوزيع
+        # Initialize data structures for distribution
         self._message_queue = asyncio.Queue()
-        self._tag_subscribers = defaultdict(set)  # قاموس يخزن المشتركين حسب التاج
-        self._subscriber_queues = {}  # قاموس يخزن قائمة رسائل لكل مشترك
+        self._tag_subscribers = defaultdict(set)  # Dictionary storing subscribers by tag
+        self._subscriber_queues = {}  # Dictionary storing message queue for each subscriber
         self._consumer_task = None
         self._distributor_task = None
         
@@ -49,6 +49,7 @@ class KafkaServices:
                 max_poll_records=self.batch_size,
                 consumer_timeout_ms=1000  # Short timeout for faster detection of client disconnects
             )
+            logger.info(f"Initialized Kafka consumer for topic {self.kafka_topic} on broker {self.kafka_broker}")
             return True
         except Exception as e:
             logger.error(f"Failed to initialize Kafka consumer: {e}")
@@ -82,23 +83,26 @@ class KafkaServices:
         return True
 
     async def start_background_tasks(self):
-        """بدء المهام الأساسية للاستهلاك والتوزيع"""
-        # بدء مهمة استهلاك الرسائل من كافكا
+        """Start core tasks for consumption and distribution"""
+        # Start task for consuming messages from Kafka
         if self._consumer_task is None or self._consumer_task.done():
             self._consumer_task = asyncio.create_task(self._consume_messages())
+            logger.info("Started Kafka consumer task")
             
-        # بدء مهمة توزيع الرسائل للمشتركين
+        # Start task for distributing messages to subscribers
         if self._distributor_task is None or self._distributor_task.done():
             self._distributor_task = asyncio.create_task(self._distribute_messages())
+            logger.info("Started message distributor task")
             
     async def _consume_messages(self):
-        """استهلاك الرسائل من كافكا ووضعها في قائمة الانتظار"""
+        """Consume messages from Kafka and put them in the queue"""
         if not self.is_started:
             success = await self.start()
             if not success:
                 logger.error("Failed to start Kafka consumer")
                 return
                 
+        logger.info("Consumer task is running and waiting for messages")
         try:
             while True:
                 try:
@@ -107,40 +111,51 @@ class KafkaServices:
                             message_value = message.value.decode('utf-8')
                             message_json = json.loads(message_value)
                             
-                            # وضع الرسالة في قائمة الانتظار
+                            # Put the message in the queue
+                            logger.info(f"Received message from Kafka: {message_json.get('tag_id', 'unknown tag')}")
                             await self._message_queue.put(message_json)
                         except json.JSONDecodeError:
-                            logger.error(f"Failed to parse message as JSON")
+                            logger.error(f"Failed to parse message as JSON: {message_value}")
                         except Exception as e:
                             logger.error(f"Error processing Kafka message: {e}")
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     logger.error(f"Error consuming Kafka messages: {e}")
-                    await asyncio.sleep(5)  # انتظار قبل المحاولة مرة أخرى
+                    await asyncio.sleep(5)  # Wait before trying again
         except asyncio.CancelledError:
             logger.info("Kafka consumer task cancelled")
             raise
     
     async def _distribute_messages(self):
-        """توزيع الرسائل من قائمة الانتظار للمشتركين"""
+        """Distribute messages from the queue to subscribers"""
+        logger.info("Distributor task is running and waiting for messages")
         try:
             while True:
-                # انتظار رسالة جديدة
+                # Wait for a new message
                 message = await self._message_queue.get()
                 
-                # استخراج معرف التاج
+                # Extract tag ID
                 tag_id = message.get("tag_id")
                 if not tag_id:
                     logger.warning(f"Message without tag_id: {message}")
                     self._message_queue.task_done()
                     continue
                 
-                # إرسال الرسالة للمشتركين في هذا التاج
+                # IMPORTANT: Just forward the message as-is to subscribers
+                # dashboard_services.py expects the raw message with tag_id
+                
+                # Send the message to subscribers of this tag
                 subscribers = self._tag_subscribers.get(tag_id, set())
+                
+                if not subscribers:
+                    logger.warning(f"No subscribers for tag {tag_id}")
+                
                 for subscriber_id in subscribers:
                     if subscriber_id in self._subscriber_queues:
                         await self._subscriber_queues[subscriber_id].put(message)
+                    else:
+                        logger.warning(f"Subscriber {subscriber_id} has no queue")
                 
                 self._message_queue.task_done()
         except asyncio.CancelledError:
@@ -148,31 +163,32 @@ class KafkaServices:
             raise
             
     async def subscribe_to_tags(self, tags, max_queue_size=1000):
-        """اشتراك في مجموعة من التاجات"""
-        # إنشاء معرف فريد للمشترك
+        """Subscribe to a set of tags"""
+        # Create a unique ID for the subscriber
         subscriber_id = str(uuid.uuid4())
         
-        # إنشاء قائمة انتظار للمشترك
+        # Create a queue for the subscriber
         self._subscriber_queues[subscriber_id] = asyncio.Queue(maxsize=max_queue_size)
         
-        # إضافة المشترك لكل التاجات المطلوبة
+        # Add the subscriber to all requested tags
         for tag in tags:
             self._tag_subscribers[tag].add(subscriber_id)
+            logger.info(f"Added subscriber {subscriber_id} to tag {tag}")
             
-        # ضمان بدء المهام الأساسية
+        # Ensure core tasks are started
         await self.start_background_tasks()
         
         logger.info(f"Subscriber {subscriber_id} subscribed to {len(tags)} tags")
         return subscriber_id
         
     async def unsubscribe(self, subscriber_id):
-        """إلغاء اشتراك مشترك"""
-        # إزالة المشترك من كل التاجات
+        """Unsubscribe a subscriber"""
+        # Remove the subscriber from all tags
         for tag, subscribers in self._tag_subscribers.items():
             if subscriber_id in subscribers:
                 subscribers.remove(subscriber_id)
                 
-        # إزالة قائمة انتظار المشترك
+        # Remove the subscriber's queue
         if subscriber_id in self._subscriber_queues:
             self._subscriber_queues.pop(subscriber_id)
             
@@ -180,8 +196,8 @@ class KafkaServices:
         
     async def get_messages(self, subscriber_id, timeout=0.5):
         """
-        الحصول على الرسائل المتاحة للمشترك.
-        يرجع قائمة بالرسائل المتاحة (ممكن تكون فارغة).
+        Get available messages for the subscriber.
+        Returns a list of available messages (can be empty).
         """
         if subscriber_id not in self._subscriber_queues:
             logger.warning(f"Attempted to get messages for unknown subscriber: {subscriber_id}")
@@ -190,22 +206,25 @@ class KafkaServices:
         queue = self._subscriber_queues[subscriber_id]
         messages = []
         
-        # جمع كل الرسائل المتاحة (بحد أقصى 20 رسالة)
+        # Collect all available messages (maximum 20 messages)
         try:
-            # محاولة الحصول على الرسالة الأولى مع timeout
+            # Try to get the first message with timeout
             message = await asyncio.wait_for(queue.get(), timeout=timeout)
             messages.append(message)
             queue.task_done()
             
-            # جمع أي رسائل إضافية متاحة فورًا (بدون انتظار)
-            for _ in range(19):  # الحد الأقصى 19 رسالة إضافية
+            # Collect any additional messages available immediately (without waiting)
+            for _ in range(19):  # Maximum 19 additional messages
                 if queue.empty():
                     break
                 message = queue.get_nowait()
                 messages.append(message)
                 queue.task_done()
+                
+            if messages:
+                logger.info(f"Retrieved {len(messages)} messages for subscriber {subscriber_id}")
         except asyncio.TimeoutError:
-            # لا توجد رسائل متاحة، هذا طبيعي
+            # No messages available, this is normal
             pass
         except Exception as e:
             logger.error(f"Error getting messages for subscriber {subscriber_id}: {e}")
@@ -214,13 +233,13 @@ class KafkaServices:
     
     async def consume_forever(self):
         """
-        تم استبدالها بنموذج الاشتراك الجديد.
-        تبقى للتوافق مع الكود القديم.
+        Replaced with the new subscription model.
+        Remains for compatibility with old code.
         """
-        # تحذير - استخدم النظام الجديد
+        # Warning - use the new system
         logger.warning("consume_forever is deprecated. Use subscribe_to_tags and get_messages instead.")
         
-        # إنشاء اشتراك لكل التاجات (سلوك غير فعال)
+        # Create a subscription for all tags (inefficient behavior)
         all_tags = list(self._tag_subscribers.keys())
         subscriber_id = await self.subscribe_to_tags(all_tags if all_tags else ["all"])
         
@@ -230,11 +249,11 @@ class KafkaServices:
                 for message in messages:
                     yield message
                     
-                # انتظار قصير لتجنب الاستهلاك المفرط للموارد
+                # Short wait to avoid excessive resource consumption
                 if not messages:
                     await asyncio.sleep(0.1)
         finally:
-            # إلغاء الاشتراك عند الخروج
+            # Unsubscribe when exiting
             await self.unsubscribe(subscriber_id)
 
 kafka_services = KafkaServices()

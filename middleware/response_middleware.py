@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from typing import Callable
 import json
-from utils.response import error_response
+from utils.response import fail_response
 
 
 class StandardResponseMiddleware(BaseHTTPMiddleware):
@@ -33,7 +33,8 @@ class StandardResponseMiddleware(BaseHTTPMiddleware):
                 # Wrap the response in success format
                 standardized = {
                     "status": "success",
-                    "data": response_data
+                    "data": response_data,
+                    "message": None
                 }
                 
                 return JSONResponse(
@@ -50,5 +51,5 @@ class StandardResponseMiddleware(BaseHTTPMiddleware):
             # Handle unhandled exceptions
             return JSONResponse(
                 status_code=500,
-                content=error_response(f"Unhandled server error: {str(e)}")
+                content=fail_response(f"Unhandled server error: {str(e)}")
             ) 

@@ -61,7 +61,7 @@ GET_POLLING_TAGS = text("""
     ORDER BY t.name
 """)
 
-def get_tag_data_with_tag_id(tag_id: str):
+async def get_tag_data_with_tag_id(tag_id: int):
     """Retrieve tag data with tag ID with caching."""
     if not tag_id:
         logger.warning("Tag ID is required for get_tag_data_with_tag_id")
@@ -69,41 +69,43 @@ def get_tag_data_with_tag_id(tag_id: str):
 
     query_key = f"tag_data_{tag_id}"
     logger.info(f"Attempting to retrieve data for query key: {query_key}")
-    cached_data = get_cached_data(query_key)
+    # cached_data = await get_cached_data(query_key)
 
-    if cached_data:
-        logger.success(f"Cache hit for query key: {query_key}")
-        return cached_data
+    # if cached_data:
+    #     logger.success(f"Cache hit for query key: {query_key}")
+    #     return cached_data
 
-    with engine.connect() as conn:
+    async with engine.connect() as conn:
         try:
-            result = conn.execute(GET_TAG_BY_ID, {"tag_id": tag_id})
+            result = await conn.execute(GET_TAG_BY_ID, {"tag_id": tag_id})
             rows = result.mappings().all()
             data = [dict(row) for row in rows]
-            set_cached_data(query_key, data)
+            # set_cached_data(query_key, data)
             logger.success(f"Data retrieved and cached for tag_id {tag_id}. Rows: {len(data)}")
-            return data
+            return success_response(data)
         except Exception as e:
             logger.error(f"Error executing query for tag_id {tag_id}: {e}")
             return {"error": f"Database error retrieving data for tag {tag_id}"}
 
-def get_all_tag_data():
+async def get_all_tag_data():
     """Retrieve all tag data with caching."""
     query_key = "all_tag_data"
     logger.info(f"Attempting to retrieve data for query key: {query_key}")
-    cached_data = get_cached_data(query_key)
-    if cached_data:
-        logger.success(f"Cache hit for query key: {query_key}")
-        return cached_data
+    # cached_data = await get_cached_data(query_key)
 
-    with engine.connect() as conn:
+    # if cached_data:
+    #     logger.success(f"Cache hit for query key: {query_key}")
+    #     return cached_data
+
+    async with engine.connect() as conn:
         try:
-            result = conn.execute(GET_ALL_TAGS)
+            result = await conn.execute(GET_ALL_TAGS)
+            print(result)
             rows = result.mappings().all()
             data = [dict(row) for row in rows]
-            set_cached_data(query_key, data)
+            # await set_cached_data(query_key, data)
             logger.success(f"All tag data retrieved and cached. Rows: {len(data)}")
-            return data
+            return success_response(data)
         except Exception as e:
             logger.error(f"Error executing query for all tags: {e}")
             return {"error": "Database error retrieving all tags"}

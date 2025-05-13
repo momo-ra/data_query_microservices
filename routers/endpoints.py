@@ -7,11 +7,20 @@ from services.card_services import get_user_cards, create_user_card, update_user
 from services.card_services import handle_card_websocket
 from services.dashboard_services import handle_dashboard
 from utils.log import setup_logger
-from schemas.schema import TagListResponse, CardSchema, GraphSchema
+from schemas.schema import TagListResponse, CardSchema, GraphSchema, TagSchema, ResponseModel
 from services.graph_services import create_graph
+from typing import List, Optional
+from utils.response import success_response, error_response, handle_exception, create_model_response, fail_response
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/v1")
 logger = setup_logger(__name__)
+
+# Example User model for demonstration
+class User(BaseModel):
+    id: int
+    name: str
+    email: str
 
 #
 # Data Query Endpoints
@@ -26,27 +35,95 @@ async def fetch_table_data(
     """Fetch table data with optional time filtering and caching."""
     try:
         data = get_table_data(table_name, start_time, end_time, limit)
-        return {"table": table_name, "records": data}
+        return success_response({"table": table_name, "records": data})
     except Exception as e:
         logger.error(f"Error fetching table data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching data: {str(e)}")
 
-@router.get("/tags/{tag_id}/data")
-async def fetch_tag_data(tag_id: str):
+@router.get("/tags/{tag_id}/data", response_model=ResponseModel[TagSchema])
+async def fetch_tag_data(tag_id: int):
     """Fetch tag data with tag ID with caching."""
     try:
-        records = get_tag_data_with_tag_id(tag_id)
-        return {"tag": tag_id, "records": records}
+        records = await get_tag_data_with_tag_id(tag_id)
+        
+        # Format the response to match TagSchema
+        if records and not isinstance(records, dict) and len(records) > 0:
+            record = records[0]  # Get the first record
+            tag_data = TagSchema(
+                id=str(record.get("id", tag_id)),
+                name=record.get("name", ""),
+                description=record.get("description", ""),
+                timestamp=record.get("timestamp", ""),
+                value=str(record.get("value", "")),
+                unit_of_measure=record.get("unit_of_measure", "")
+            )
+            return ResponseModel(status="success", data=tag_data, message=None)
+        elif isinstance(records, dict) and "error" in records:
+            # Handle error case
+            tag_data = TagSchema(
+                id=str(tag_id),
+                name=f"Tag {tag_id}",
+                description="Error retrieving tag",
+                timestamp="",
+                value="",
+                unit_of_measure=""
+            )
+            return ResponseModel(status="fail", data=tag_data, message=records.get("error", "Error retrieving tag"))
+        else:
+            # Handle case where no records found
+            tag_data = TagSchema(
+                id=str(tag_id),
+                name=f"Tag {tag_id}",
+                description="No data found",
+                timestamp="",
+                value="",
+                unit_of_measure=""
+            )
+            return ResponseModel(status="success", data=tag_data, message="No data found")
     except Exception as e:
         logger.error(f"Error fetching tag data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching tag data: {str(e)}")
 
-@router.get("/tags")
+@router.get("/tags", response_model=TagListResponse)
 async def fetch_all_tag_data():
     """Fetch all tag data."""
     try:
-        records = get_all_tag_data()
-        return {"records": records}
+        response = await get_all_tag_data()
+        
+        # Convert raw tag data to conform to TagSchema format
+        if isinstance(response, dict) and response.get("status") == "success" and isinstance(response.get("data"), list):
+            formatted_tags = []
+            for tag in response["data"]:
+                formatted_tag = {
+                    "id": str(tag.get("id", "")),
+                    "name": tag.get("name", ""),
+                    "description": tag.get("description", ""),
+                    "timestamp": tag.get("timestamp", ""),
+                    "value": str(tag.get("value", "")),
+                    "unit_of_measure": tag.get("unit_of_measure", "")
+                }
+                formatted_tags.append(formatted_tag)
+            
+            # Return properly constructed Pydantic model
+            return TagListResponse(
+                status="success",
+                data=formatted_tags,
+                message=None
+            )
+        elif isinstance(response, dict) and "error" in response:
+            # Handle error case using Pydantic model
+            return TagListResponse(
+                status="fail",
+                data=None,
+                message=response["error"]
+            )
+        else:
+            # Handle unexpected response format using Pydantic model
+            return TagListResponse(
+                status="fail",
+                data=None,
+                message="Unexpected response format from database query"
+            )
     except Exception as e:
         logger.error(f"Error fetching all tags: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching all tags: {str(e)}")
@@ -63,7 +140,7 @@ async def fetch_trends_data(
     try:
         tag_ids = {"tag_id_1": tag_id_1, "tag_id_2": tag_id_2}
         data = await get_trends_data(db, tag_ids, start_time, end_time)
-        return {"data": data}
+        return success_response({"data": data})
     except Exception as e:
         logger.error(f"Error fetching trends data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching trends data: {str(e)}")
@@ -71,22 +148,29 @@ async def fetch_trends_data(
 @router.get('/polling/tags', response_model=TagListResponse)
 async def fetch_polling_tags(db: AsyncSession = Depends(get_db), current_user = Depends(authenticate_user)):
     """Fetch all active polling tags with validation"""
-    result = await get_polling_tags(db, current_user)
-    if result["status"] == "success":
-        # Return a properly formatted response that will be validated
-        return {
-            "status": "success", 
-            "data": result["data"]
-        }
-    if result["status"] == "fail":
-        return {
-            "status": "fail",
-            "data": None,
-            "message": "Something Went Wrong"
-        }
-    else:
-        logger.error(f"Error fetching polling tags: {result['message']}")
-        raise HTTPException(status_code=500, detail=result["message"])
+    try:
+        result = await get_polling_tags(db, current_user)
+        if result.get("status") == "success" and isinstance(result.get("data"), list):
+            # Ensure data is in the correct format for TagListResponse
+            return TagListResponse(
+                status="success",
+                data=result["data"],
+                message=None
+            )
+        else:
+            # Handle error case
+            return TagListResponse(
+                status="fail",
+                data=None,
+                message=result.get("message", "Error fetching polling tags")
+            )
+    except Exception as e:
+        logger.error(f"Error fetching polling tags: {str(e)}")
+        return TagListResponse(
+            status="fail",
+            data=None,
+            message=str(e)
+        )
 
 #comments
 {
@@ -265,5 +349,38 @@ async def create_graph_(graph_name: str, description:str, db: AsyncSession = Dep
                 # If it's an error response, raise an HTTPException
                 raise HTTPException(status_code=400, detail=result.get("message", "Error creating graph"))
     except Exception as e:
-        logger.error(f"Something Went Wrong in Crate Graph: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Something Went Wrong in Create Graph: {str(e)}")
+        return error_response(str(e))
+
+# Example endpoint using the new ResponseModel
+@router.get("/users/{user_id}", response_model=ResponseModel[User])
+async def get_user(user_id: int):
+    """Example endpoint demonstrating ResponseModel usage"""
+    if user_id == 1:
+        user = User(id=1, name="Mohamed", email="mohamed@example.com")
+        return ResponseModel(status="success", data=user, message=None)
+    else:
+        return ResponseModel(
+            status="fail",
+            data=None,
+            message=f"User with ID {user_id} not found"
+        )
+
+# Example endpoint returning a list of users
+@router.get("/users", response_model=ResponseModel[List[User]])
+async def get_users():
+    """Example endpoint demonstrating ResponseModel with a list"""
+    users = [
+        User(id=1, name="Mohamed", email="mohamed@example.com"),
+        User(id=2, name="Ahmed", email="ahmed@example.com")
+    ]
+    return ResponseModel(status="success", data=users, message=None)
+
+# Example demonstrating the helper functions
+@router.get("/items/{item_id}")
+async def get_item(item_id: int):
+    """Example endpoint demonstrating the success_response and fail_response helper functions"""
+    if item_id > 0:
+        return success_response({"item_id": item_id, "name": f"Item {item_id}"})
+    else:
+        return fail_response("Invalid item ID")

@@ -1,6 +1,25 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional, Generic, TypeVar
+from typing import List, Optional, Generic, TypeVar, Any, Dict, Union
+
+# Generic type for response data
+T = TypeVar('T')
+
+class ResponseModel(BaseModel, Generic[T]):
+    """Base model for standardized API responses"""
+    status: str = Field(..., description="حالة الاستجابة (success/fail)")
+    data: Optional[T] = Field(None, description="البيانات المرجعة من الاستجابة")
+    message: Optional[str] = Field(None, description="رسالة توضيحية (إلزامية في حالة الفشل)")
+
+# Keeping existing ResponseSchema for backward compatibility
+class ResponseSchema(ResponseModel[T], Generic[T]):
+    """Alias for ResponseModel for backward compatibility"""
+    pass
+
+# Keeping existing StandardResponse for backward compatibility
+class StandardResponse(ResponseModel[T], Generic[T]):
+    """Alias for ResponseModel for backward compatibility"""
+    pass
 
 class TagSchema(BaseModel):
     """Schema for Tag"""
@@ -24,16 +43,7 @@ class CreateCardSchema(BaseModel):
     is_active: bool = Field(default=True)
     tags: List[int] = Field(..., description="It's array of tags that user interested about it")
 
-# Generic type for response data
-T = TypeVar('T')
-
-class StandardResponse(BaseModel, Generic[T]):
-    """Base model for standardized API responses"""
-    status: str
-    data: Optional[T] = None
-    message: Optional[str] = None
-
-class TagListResponse(StandardResponse[List[TagSchema]]):
+class TagListResponse(ResponseModel[List[TagSchema]]):
     """Standard response with a list of validated tags"""
     data: List[TagSchema]
 
@@ -42,10 +52,10 @@ class CardSchema(BaseModel):
     tag: TagSchema
     graph_type: str = Field(..., description="Graph Type")
 
-class CardListResponse(StandardResponse[List[CardSchema]]):
+class CardListResponse(ResponseModel[List[CardSchema]]):
     data: List[CardSchema]
 
 class GraphSchema(BaseModel):
     id: int = Field(..., description='Unique Field for Graph Type')
     name: str = Field(..., description='Graph Type Field')
-    description: Optional[str] = Field(description='Graph Type Description')
+    description: Optional[str] = Field(None, description='Graph Type Description')

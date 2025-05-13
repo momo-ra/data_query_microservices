@@ -7,9 +7,9 @@ T = TypeVar('T')
 
 class ResponseModel(BaseModel, Generic[T]):
     """Base model for standardized API responses"""
-    status: str = Field(..., description="حالة الاستجابة (success/fail)")
-    data: Optional[T] = Field(None, description="البيانات المرجعة من الاستجابة")
-    message: Optional[str] = Field(None, description="رسالة توضيحية (إلزامية في حالة الفشل)")
+    status: str = Field(..., description="Status of Response(success/fail)")
+    data: Optional[T] = Field(None, description="Data should be return")
+    message: Optional[str] = Field(None, description="Error message when fail happened")
 
 # Keeping existing ResponseSchema for backward compatibility
 class ResponseSchema(ResponseModel[T], Generic[T]):

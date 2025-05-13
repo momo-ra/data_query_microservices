@@ -9,8 +9,8 @@ from services.dashboard_services import handle_dashboard
 from utils.log import setup_logger
 from schemas.schema import TagListResponse, CardSchema, GraphSchema, TagSchema, ResponseModel
 from services.graph_services import create_graph
-from typing import List, Optional
-from utils.response import success_response, error_response, handle_exception, create_model_response, fail_response
+from typing import List
+from utils.response import success_response, error_response, fail_response
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/v1")
@@ -145,32 +145,20 @@ async def fetch_trends_data(
         logger.error(f"Error fetching trends data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching trends data: {str(e)}")
 
-@router.get('/polling/tags', response_model=TagListResponse)
+@router.get('/polling/tags', response_model=ResponseModel[List[TagSchema]])
 async def fetch_polling_tags(db: AsyncSession = Depends(get_db), current_user = Depends(authenticate_user)):
     """Fetch all active polling tags with validation"""
     try:
         result = await get_polling_tags(db, current_user)
-        if result.get("status") == "success" and isinstance(result.get("data"), list):
-            # Ensure data is in the correct format for TagListResponse
-            return TagListResponse(
-                status="success",
-                data=result["data"],
-                message=None
-            )
+        if result:
+            # The data from get_polling_tags is already in the right format, just use it directly
+            return ResponseModel(status="success", data=result, message=None)
         else:
             # Handle error case
-            return TagListResponse(
-                status="fail",
-                data=None,
-                message=result.get("message", "Error fetching polling tags")
-            )
+            return ResponseModel(status="fail", data=None, message="No Data Found")
     except Exception as e:
         logger.error(f"Error fetching polling tags: {str(e)}")
-        return TagListResponse(
-            status="fail",
-            data=None,
-            message=str(e)
-        )
+        return ResponseModel(status="fail", data=None, message=str(e))
 
 #comments
 {

@@ -6,7 +6,7 @@ from utils.convert_timestamp import convert_timestamp_format
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 from typing import Optional
-from utils.response import success_response, error_response, handle_exception
+from utils.response import success_response, error_response
 
 logger = setup_logger(__name__)
 
@@ -290,7 +290,7 @@ async def get_polling_tags(db, current_user):
                 }
                 formatted_tags.append(tag)
                 
-            return success_response(formatted_tags)
+            return formatted_tags
     except Exception as e:
         error_msg = f"Error fetching polling tags: {str(e)}"
         logger.error(error_msg)

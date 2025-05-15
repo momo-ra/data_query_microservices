@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv('.env', override=True)
 kafka_topic = os.getenv('KAFKA_TOPIC')
-kafka_broker = os.getenv('KAFKA_BROKER')
+kafka_broker = os.getenv('KAFKA_BROKER') 
 # kafka_broker = "localhost:19092"
 logger = setup_logger(__name__)
 

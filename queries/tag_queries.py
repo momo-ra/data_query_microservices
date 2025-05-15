@@ -32,7 +32,6 @@ GET_HISTORICAL_TAG_DATA = text("""
     WHERE ts.tag_id = ANY(:tag_ids)
       AND ts.timestamp BETWEEN :start_time AND :end_time
     ORDER BY ts.timestamp DESC
-    LIMIT :limit
 """)
 
 # Get latest tag values - Fix PostgreSQL parameter binding for arrays
@@ -209,7 +208,6 @@ async def get_historical_tag_data(
                     "tag_ids": numeric_tag_ids,
                     "start_time": start_dt,
                     "end_time": end_dt,
-                    "limit": 1000  # Max number of data points to return
                 }
             )
             

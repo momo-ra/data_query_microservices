@@ -8,7 +8,7 @@ from services.card_services import handle_card_websocket
 from services.dashboard_services import handle_dashboard
 from utils.log import setup_logger
 from schemas.schema import TagListResponse, CardSchema, GraphSchema, TagSchema, ResponseModel
-from services.graph_services import create_graph
+from services.graph_services import create_graph, get_graphs
 from typing import List
 from utils.response import success_response, error_response, fail_response
 from pydantic import BaseModel
@@ -317,6 +317,24 @@ async def create_graph_(graph_name: str, description:str, db: AsyncSession = Dep
     except Exception as e:
         logger.error(f"Something Went Wrong in Create Graph: {str(e)}")
         return error_response(str(e))
+
+#Get All Graphs
+@router.get('/graphs', response_model=ResponseModel[List[GraphSchema]])
+async def get_all_graphs(current_user= Depends(authenticate_user),db:AsyncSession= Depends(get_db)):
+    try:
+        async with db as session:
+            result = await get_graphs(current_user, session)
+            print(result)
+            if result.get("status") == "success":
+                # Return just the data part which should match GraphSchema
+                return result
+            else:
+                # If it's an error response, raise an HTTPException
+                raise HTTPException(status_code=400, detail=result.get("message", "Error creating graph"))
+    except Exception as e:
+        logger.error(f"Something Went Wrong in Getting Graph: {str(e)}")
+        return error_response(str(e))
+
 
 # Example endpoint using the new ResponseModel
 @router.get("/users/{user_id}", response_model=ResponseModel[User])

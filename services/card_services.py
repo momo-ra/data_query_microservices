@@ -16,6 +16,7 @@ from queries.card_queries import (
 )
 from sqlalchemy import text
 from utils.response_model import success_response, error_response
+from utils.response import success_response as success_response2
 from fastapi.websockets import WebSocketState
 import asyncio
 import time
@@ -100,7 +101,7 @@ async def create_user_card(db: AsyncSession, user_id: int, card: dict, current_u
         # Parse start and end times
         start_time = parse_relative_time(card.get("startTime", "-1h"))
         end_time = parse_relative_time(card.get("endTime", "now"))
-        
+
         # Create card
         result = await db.execute(
             CREATE_CARD, 
@@ -115,9 +116,15 @@ async def create_user_card(db: AsyncSession, user_id: int, card: dict, current_u
         
         # Associate tags with the card
         for tag_id in card["tags"]:
-            await db.execute(ADD_TAG_TO_CARD, {"card_id": card_id, "tag_id": tag_id})
-        
+            await db.execute(ADD_TAG_TO_CARD, {"card_id": card_id, "tag_id": tag_id})  
         await db.commit()
+        
+        #----------------------------- here you need to update ---------------------------------
+        # if end_time != 'now' or 'Now':
+        #     result = await get_historical_tag_data(card["tags"], start_time, end_time)
+        #     await update_user_card(db, card_id, {"is_active": False})
+        #     return success_response2(result)
+        #----------------------------- here you need to update ---------------------------------
         
         logger.success(f"Created new card {card_id} for user {user_id} with {len(card['tags'])} tags")
         response = await success_response({"id": card_id, "status": "created"})
@@ -285,7 +292,6 @@ async def handle_card_websocket(websocket: WebSocket, card_id: int, db: AsyncSes
             return
         
         # 3. Check authorization to access this card
-        card_owner_id = card_rows[0]['owner_id']
         can_access = await can_access_card(db, card_id, user_data)
         
         if not can_access:

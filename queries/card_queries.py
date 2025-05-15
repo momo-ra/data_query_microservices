@@ -22,8 +22,8 @@ GET_USER_CARDS = text("""
 
 # Card creation query
 CREATE_CARD = text("""
-    INSERT INTO card_data (user_id, start_time, end_time, is_active, created_at, updated_at)
-    VALUES (:user_id, :start_time, :end_time, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    INSERT INTO card_data (user_id, start_time, end_time, is_active, graph_type_id, created_at, updated_at)
+    VALUES (:user_id, :start_time, :end_time, true, :graph_type_id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     RETURNING id
 """)
 
@@ -70,6 +70,16 @@ GET_CARD_WITH_TAGS = text("""
     JOIN card_data_tags cdt ON cd.id = cdt.card_data_id
     JOIN tag t ON cdt.tag_id = t.id
     WHERE cd.id = :card_id AND cd.is_active = true
+""")
+
+GET_CARD_HISTORICAL_DATA = text("""
+    SELECT t.id as tag_id, t.name as tag_name, ts.value, ts.timestamp
+    FROM time_series ts
+    JOIN tag t ON ts.tag_id = t.id
+    WHERE ts.tag_id = ANY(:tag_ids)
+      AND ts.timestamp BETWEEN :start_time AND :end_time
+    ORDER BY ts.timestamp DESC
+    LIMIT :limit
 """)
 
 async def get_user_cards(db: AsyncSession, user_id: int, current_user: dict):
@@ -300,3 +310,12 @@ async def delete_card(db: AsyncSession, card_id: int, current_user: dict):
         logger.error(f"Error deleting card {card_id}: {e}")
         response = await error_response(f"Database error: {str(e)}", status_code=500)
         return response
+
+async def get_card_historical_data(db:AsyncSession, card_id:int, start_time, end_time):
+    try:
+        async with db as session:
+            result = await  db.execute(GET_CARD_HISTORICAL_DATA, {card_id: card_id,
+                                                                  start_time: start_time,
+                                                                  end_time: end_time})
+    except Exception as e:
+        logger.error('Something went wrong to get the historical data',e)

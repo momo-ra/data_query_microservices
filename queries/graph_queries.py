@@ -14,6 +14,9 @@ CREATE_GRAPH = text("""
     RETURNING id
 """)
 
+GET_ALL_GRAPHS = text("""
+                      SELECT * from graph_type
+""")
 async def create_graph(graph_name, description, session, current_user):
     try:
         if not current_user:
@@ -38,3 +41,15 @@ async def create_graph(graph_name, description, session, current_user):
     except Exception as e:
         logger.error(f"Error creating graph: {e}")
         return error_response(f"Error creating graph: {str(e)}")
+    
+async def get_all_graphs(current_user, session):
+    if not current_user:
+        return error_response("User Not Authorized")
+    try:
+        result = await session.execute(GET_ALL_GRAPHS)
+        data = result.mappings().all()
+        return success_response(data)
+    except Exception as e:
+        logger.error('Error happened when getting the whole graphs')
+        error_response('Something went Wrong', e)
+    
